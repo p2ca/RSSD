@@ -1,0 +1,29 @@
+# --- data and run artifacts (never committed) ---
+logs/
+data/parsed/
+data/align/
+data/meta/
+*.pt
+*.pth
+*.npz
+*.pkl
+
+# --- local working directories ---
+_reference/
+_internal/
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# --- editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

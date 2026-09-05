@@ -1,0 +1,100 @@
+# Experiment manifest for the reported comparison.
+#
+# It names the runs rather than redefining them: the architecture of each variant lives in
+# `rssd/profiles.py`, and `rssd.config.build_train_cfg` derives a run's configuration from
+# it. This file records which variants were trained on which source pools, and which
+# checkpoint each transfer scenario evaluates.
+#
+#   python -m rssd.cli.train --list-runs        # print the training commands
+#   python -m rssd.cli.train --variant rssd_lstm --dataset snow_source_v2 --version v2
+#   python -m rssd.cli.evaluate --scenario snow2rain --variant rssd_lstm
+
+version: v2
+
+protocol:
+  input_window_days: 30
+  forecast_lead_days: 7
+  dynamic_inputs: [inflow, precipitation, tmax, tmin]
+  static_attributes: [storage_max, elev_mean, surface_area, lat, lon, ground_elev]
+  target_history_years: 10
+  target_split: [0.70, 0.15, 0.15]      # chronological, on the target's recent record
+  source_split: [0.70, 0.15, 0.15]      # chronological, on each source reservoir's record
+
+# Source pools a model can be trained on. `reservoirs` points at the frozen list shipped
+# with the code; `align_target` is the unlabelled pool the alignment baselines align to.
+sources:
+  snow:
+    dataset: snow_source_v2
+    reservoirs: data/reservoirs_snow_source_v2.txt
+    align_target: rain_target_v2
+  rain:
+    dataset: rain_source
+    reservoirs: data/reservoirs_rain_source.txt
+    align_target: snow_target_v2
+  mixed:
+    dataset: mixed_source_v2
+    align_target: rain_target_v2
+
+targets:
+  snow:
+    dataset: snow_target_v2
+    reservoirs: data/reservoirs_snow_target_v2.txt
+  rain:
+    dataset: rain_target_v2
+    reservoirs: data/reservoirs_rain_target_v2.txt
+
+# The information-utilisation ladder. Every variant is trained on every source pool.
+variants:
+  - {key: seq2seq_lstm,            name: Seq2Seq-LSTM}
+  - {key: attribute_informed_lstm, name: Attribute-informed LSTM}
+  - {key: identity_informed_lstm,  name: Identity-informed LSTM}
+  - {key: fully_informed_lstm,     name: Fully-informed LSTM}
+  - {key: fully_informed_mmd,      name: Fully-informed LSTM + MMD}
+  - {key: fully_informed_coral,    name: Fully-informed LSTM + CORAL}
+  - {key: fully_informed_dann,     name: Fully-informed LSTM + DANN}
+  - {key: rssd_lstm,               name: RSSD-LSTM}
+  - {key: rssd_transformer,        name: RSSD-Transformer}
+
+# Transfer scenarios: which trained source model is evaluated on which target pool.
+scenarios:
+  - {key: snow2snow,  source: snow,  target: snow, kind: within-regime}
+  - {key: rain2rain,  source: rain,  target: rain, kind: within-regime}
+  - {key: snow2rain,  source: snow,  target: rain, kind: cross-regime}
+  - {key: rain2snow,  source: rain,  target: snow, kind: cross-regime}
+  - {key: mixed2snow, source: mixed, target: snow, kind: mixed-source}
+  - {key: mixed2rain, source: mixed, target: rain, kind: mixed-source}
+
+# Alternative source/target partitions used for the robustness check. Each keeps the number
+# of source and target reservoirs per regime and changes which reservoirs fill them.
+partitions:
+  main:
+    snow_source: data/reservoirs_snow_source_v2.txt
+    snow_target: data/reservoirs_snow_target_v2.txt
+    rain_source: data/reservoirs_rain_source.txt
+    rain_target: data/reservoirs_rain_target_v2.txt
+  swapA:
+    snow_source: data/reservoirs_snow_source_swapA.txt
+    snow_target: data/reservoirs_snow_target_swapA.txt
+    rain_source: data/reservoirs_rain_source_swapA.txt
+    rain_target: data/reservoirs_rain_target_swapA.txt
+  swapB:
+    snow_source: data/reservoirs_snow_source_swapB.txt
+    snow_target: data/reservoirs_snow_target_swapB.txt
+    rain_source: data/reservoirs_rain_source_swapB.txt
+    rain_target: data/reservoirs_rain_target_swapB.txt
+  swapC:
+    snow_source: data/reservoirs_snow_source_swapC.txt
+    snow_target: data/reservoirs_snow_target_swapC.txt
+    rain_source: data/reservoirs_rain_source_swapC.txt
+    rain_target: data/reservoirs_rain_target_swapC.txt
+
+# Sensitivity runs, expressed as overrides on the RSSD-LSTM configuration.
+sensitivity:
+  embedding_dim:
+    variant: rssd_lstm
+    override_path: [model, res_emb_dim]
+    values: [4, 8, 16, 32]
+  basis_size:
+    variant: rssd_lstm
+    override_path: [model, lcib_k]
+    values: [4, 8, 16, 32]
