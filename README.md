@@ -23,15 +23,15 @@ transfer.
 
 ---
 
-## What is here, and what is not
+## Data
 
 This repository contains the model, the data pipeline, the training and evaluation engines,
 and the analysis entry points.
 
-It does **not** contain the reservoir records or the trained checkpoints. Inflow comes from
-the USACE reservoir-data platform maintained by the Nicholas Institute at Duke University,
-and the meteorological drivers from the Daymet and Livneh products; all are obtained from
-their providers rather than redistributed here. Point the package at your own copy:
+Inflow comes from the USACE reservoir-data platform maintained by the Nicholas Institute at
+Duke University, and the meteorological drivers from the Daymet and Livneh products; all are
+obtained from their providers rather than redistributed here. Point the package at your own
+copy:
 
 ```bash
 export RSSD_DATA=/path/to/data     # reservoirs_*.txt, meta/, parsed/, align/
@@ -173,4 +173,4 @@ conference paper.
 
 ## License
 
-To be determined before public release.
+Released under the MIT License; see [LICENSE](LICENSE).
