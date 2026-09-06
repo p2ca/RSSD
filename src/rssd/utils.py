@@ -54,6 +54,82 @@ class WindowDataset(Dataset):
         return graphs, target
 
 
+def build_supervised_split_from_reservoir_blocks(
+    scaler_data,
+    reservoir_names_in_node_order,
+    split,
+    purge_head_windows=0,
+):
+    """Assemble one chronological split into the WindowDataset tensor layout.
+
+    ``all_rsr_data_<scaler_type>.pkl`` stores the training, validation and test
+    arrays separately for each reservoir.  This helper stacks one of those blocks
+    across reservoirs without changing node order.
+
+    ``purge_head_windows`` removes the first windows from validation or test.
+    With overlapping windows, setting it to ``Tin + horizon - 1`` establishes
+    an embargo after the preceding split while keeping all training windows
+    used to fit the stored scalers.
+    """
+    split = str(split).lower().strip()
+    if split not in {"train", "val", "test"}:
+        raise ValueError(f"Unsupported split={split!r}; expected train, val, or test.")
+    purge_head_windows = int(purge_head_windows)
+    if purge_head_windows < 0:
+        raise ValueError("purge_head_windows must be non-negative.")
+    if split == "train" and purge_head_windows:
+        raise ValueError("Training windows must not be head-purged.")
+    names = [str(name) for name in reservoir_names_in_node_order]
+    if not names:
+        raise ValueError("reservoir_names_in_node_order must not be empty.")
+
+    x_blocks = []
+    y_blocks = []
+    for name in names:
+        if name not in scaler_data:
+            raise KeyError(f"Reservoir {name!r} missing from scaler_data.")
+        reservoir_block = scaler_data[name]
+        if split not in reservoir_block:
+            raise KeyError(f"Split {split!r} missing for reservoir {name!r}.")
+        block = reservoir_block[split]
+        if not isinstance(block, dict) or "X" not in block or "y" not in block:
+            raise TypeError(
+                f"Expected scaler_data[{name!r}][{split!r}] to contain X and y."
+            )
+        x = np.asarray(block["X"], dtype=np.float32)
+        y = np.asarray(block["y"], dtype=np.float32)
+        if x.ndim != 3 or y.ndim != 2 or x.shape[0] != y.shape[0]:
+            raise ValueError(
+                f"Malformed {name}/{split} arrays: X={x.shape}, y={y.shape}."
+            )
+        valid = ~(np.isnan(x).any(axis=(1, 2)) | np.isnan(y).any(axis=1))
+        x = x[valid]
+        y = y[valid]
+        if x.shape[0] == 0:
+            raise ValueError(f"No finite samples remain for {name}/{split}.")
+        x_blocks.append(x)
+        y_blocks.append(y)
+
+    min_length = min(x.shape[0] for x in x_blocks)
+    start_index = 0
+    if split in {"val", "test"} and purge_head_windows:
+        if min_length <= purge_head_windows:
+            raise ValueError(
+                f"Cannot purge {purge_head_windows} windows from {split} "
+                f"with aligned length {min_length}."
+            )
+        start_index = purge_head_windows
+    x_blocks = [x[start_index:min_length] for x in x_blocks]
+    y_blocks = [y[start_index:min_length] for y in y_blocks]
+
+    # Per-reservoir X is [samples, input_days, features].  Insert nodes as
+    # dimension 2 to match [samples, input_days, nodes, features].
+    X = torch.from_numpy(np.stack(x_blocks, axis=2))
+    # Per-reservoir y is [samples, forecast_days].
+    y = torch.from_numpy(np.stack(y_blocks, axis=1))
+    return X, y
+
+
 # -------------------------
 # transforms for inflow
 # -------------------------

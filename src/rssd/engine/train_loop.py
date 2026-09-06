@@ -120,8 +120,7 @@ def train_source_model(cfg: dict, *, device=None, output_dir=None, max_epochs=No
         ds, y_train_orig, scale_arr,
         low_flow_fraction=float(dcfg["EVENT_FOCUS_LOW_FLOW_FRACTION"]))
 
-    train_dataset, val_dataset, test_dataset = datasets.build_datasets(
-        ds, val_frac=float(dcfg["VAL_FRAC"]), seed=int(exp["SEED"]))
+    train_dataset, val_dataset, test_dataset = datasets.build_datasets(ds)
 
     pin_memory = (torch.cuda.is_available() if dcfg["DL_PIN_MEMORY"] is None
                   else bool(dcfg["DL_PIN_MEMORY"]))

@@ -132,7 +132,6 @@ class EvalConfig:
     finetune_max_epochs: int = 80
     finetune_patience: int = 10
     finetune_min_delta: float = 1e-5
-    finetune_val_frac: float = 0.10
     finetune_lr: float = 2e-5
     finetune_weight_decay: float = 5e-4
     finetune_grad_clip: float = 1.0
@@ -246,7 +245,6 @@ DEFAULT_TRAIN_CFG = {
 
     "data": {
         "BATCH_SIZE": 128,
-        "VAL_FRAC": 0.10,          # share of the training windows held out for early stopping
 
         "TRAIN_WINDOW_DROP_FRAC": 0.0,
         "TRAIN_WINDOW_DROP_SEED": 424242,

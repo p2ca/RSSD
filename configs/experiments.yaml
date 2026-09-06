@@ -18,6 +18,7 @@ protocol:
   static_attributes: [storage_max, elev_mean, surface_area, lat, lon, ground_elev]
   target_history_years: 10
   target_split: [0.70, 0.15, 0.15]      # chronological, on the target's recent record
+  split_embargo_windows: 36             # input_window + forecast_lead_days - 1
   source_split: [0.70, 0.15, 0.15]      # chronological, on each source reservoir's record
 
 # Source pools a model can be trained on. `reservoirs` points at the frozen list shipped

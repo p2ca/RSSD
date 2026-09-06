@@ -6,10 +6,11 @@ loads them and assembles the loaders.
 A parsed dataset directory (``data/parsed/<dataset_tag>/``) holds two files:
 
 ``all_rsr_data_<scaler_type>.pkl``
-    fitted scalers, preprocessing parameters and the per-reservoir daily blocks.
+    fitted scalers, preprocessing parameters and the per-reservoir chronological
+    blocks, from which the validation split is assembled.
 ``_GNN_supervise_<scaler_type>.pt``
-    the windowed supervised tensors plus the graph description (``edge_index``,
-    ``encode_map``).
+    the windowed training and test tensors plus the graph description
+    (``edge_index``, ``encode_map``).
 """
 
 from __future__ import annotations
@@ -20,19 +21,21 @@ from collections import Counter
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Subset, random_split
+from torch.utils.data import DataLoader, Subset
 
 from rssd import paths
 from rssd.data.sampling import _apply_flat_window_thinning, _build_event_weighted_sampler
 from rssd.data.sampling import _compute_window_event_scores, _select_low_flow_focus_nodes
 from rssd.data.scalers import _extract_bounds_for_nonneg
 from rssd.utils import WindowDataset
+from rssd.utils import build_supervised_split_from_reservoir_blocks
 from rssd.utils import collate_zip as _collate
 from rssd.utils import inverse_transform_predictions
 
 __all__ = [
     "ParsedDataset", "load_parsed_dataset", "compute_train_scale_stats",
     "build_window_scores", "build_datasets", "build_target_datasets", "build_dataloaders",
+    "resolve_embargo_windows",
     "build_alignment_loader",
     "assert_target_scaler_consistency",
 ]
@@ -199,40 +202,59 @@ def build_window_scores(ds: ParsedDataset, y_train_orig, train_y_scale_arr,
     return scores, focus_idx, focus_names
 
 
-def build_datasets(ds: ParsedDataset, *, val_frac: float = 0.10, seed: int = 42):
+def resolve_embargo_windows(ds: ParsedDataset) -> int:
+    """Windows dropped at the head of the validation and test blocks.
+
+    ``Tin + horizon - 1`` is the number of leading windows whose input history would
+    otherwise reach back into the preceding block.
+    """
+    return int(ds.X_train.shape[1]) + int(ds.pred_len) - 1
+
+
+def build_datasets(ds: ParsedDataset):
     """Train / validation / test datasets under the frozen split protocol.
 
-    The parsed record is already divided chronologically into training, validation and
-    test blocks. Source training draws its early-stopping signal from a random
-    ``val_frac`` share of the training windows, and scores on the complete test block.
+    The parsed record is divided chronologically into training, validation and test
+    blocks. Every training window is used to fit the model; the validation block
+    selects the checkpoint and the test block scores it. Both of the latter are
+    embargoed at the head so that no window they contain reads days that belong to
+    the preceding block.
     """
-    train_dataset_full = WindowDataset(ds.X_train, ds.y_train, ds.edge_index)
-    test_dataset = WindowDataset(ds.X_test, ds.y_test, ds.edge_index)
+    purge = resolve_embargo_windows(ds)
 
-    n_total = len(train_dataset_full)
-    n_val = int(n_total * val_frac)
-    n_train = n_total - n_val
-    if not (n_train > 0 and n_val > 0):
-        raise AssertionError(f"Bad split: n_total={n_total}, n_train={n_train}, n_val={n_val}")
-    g = torch.Generator().manual_seed(seed)
-    train_dataset, val_dataset = random_split(train_dataset_full, [n_train, n_val], generator=g)
+    train_dataset_full = WindowDataset(ds.X_train, ds.y_train, ds.edge_index)
+    test_dataset = WindowDataset(ds.X_test[purge:], ds.y_test[purge:], ds.edge_index)
+    X_val, y_val = build_supervised_split_from_reservoir_blocks(
+        ds.all_rsr_data, ds.reservoir_names_in_node_order, "val",
+        purge_head_windows=purge,
+    )
+    train_dataset = Subset(train_dataset_full, list(range(len(train_dataset_full))))
+    val_dataset = WindowDataset(X_val, y_val, ds.edge_index)
+    print(f"[SPLIT] train={len(train_dataset)} val={len(val_dataset)} "
+          f"test={len(test_dataset)} embargo={purge}")
 
     return train_dataset, val_dataset, test_dataset
 
 
 def build_target_datasets(ds: ParsedDataset):
-    """Support / test datasets for a target reservoir set.
+    """Support / validation / test datasets for a target reservoir set.
 
-    The adaptation ("support") set is the target's complete training block, and the
-    forecast scores are computed on its complete test block. The adaptation routine holds
-    out its own early-stopping split from the support windows, so no separate validation
-    dataset is built here.
+    The adaptation ("support") set is the target's complete training block. Adaptation
+    is stopped on the target's own validation block and the forecast scores are
+    computed on its test block; both are embargoed at the head.
 
-    Returns ``(support, test)``.
+    Returns ``(support, val, test)``.
     """
+    purge = resolve_embargo_windows(ds)
+
     support = WindowDataset(ds.X_train, ds.y_train, ds.edge_index)
-    test = WindowDataset(ds.X_test, ds.y_test, ds.edge_index)
-    return support, test
+    X_val, y_val = build_supervised_split_from_reservoir_blocks(
+        ds.all_rsr_data, ds.reservoir_names_in_node_order, "val",
+        purge_head_windows=purge,
+    )
+    val = WindowDataset(X_val, y_val, ds.edge_index)
+    test = WindowDataset(ds.X_test[purge:], ds.y_test[purge:], ds.edge_index)
+    return support, val, test
 
 
 def _thin_and_drop(train_dataset, window_scores, *, use_event_balanced_sampling: bool,

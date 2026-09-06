@@ -2,8 +2,8 @@
 
 Every adaptation setting is an explicit keyword argument, defaulting to the frozen
 protocol values: full-parameter adaptation, a minimum improvement of 1e-5, and the target
-batches cached on the device. Early stopping is judged on a random hold-out share of the
-support windows.
+batches cached on the device. Adaptation runs on the complete support block and is
+stopped on the target's validation block.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from rssd.common import _squeeze_pred_tensor, link_pred_to_scaled, set_seed
@@ -178,6 +178,7 @@ def run_epoch(
 def finetune_on_target(
     model,
     train_dataset_full,
+    val_dataset,
     collate_fn,
     device,
     inv_pack_y,
@@ -185,7 +186,6 @@ def finetune_on_target(
     lr=3e-4,
     weight_decay=1e-4,
     grad_clip=1.0,
-    val_frac=0.2,
     patience=2,
     seed=20260312,
     mode="full",
@@ -202,18 +202,14 @@ def finetune_on_target(
     """
     Uses the SAME prediction contract as evaluation: raw -> scaled via link_pred_to_scaled, then optional clamp.
     """
-    from torch.utils.data import DataLoader, random_split
+    from torch.utils.data import DataLoader
 
     set_seed(int(seed))
     model = model.to(device)
 
-    # Early stopping is judged on a random hold-out share of the support windows.
-    n = len(train_dataset_full)
-    n_val = max(1, int(round(n * float(val_frac))))
-    n_tr = max(1, n - n_val)
-    g = torch.Generator().manual_seed(int(seed))
-    ft_train_ds, ft_val_ds = random_split(train_dataset_full, [n_tr, n_val], generator=g)
-    print(f"[FINETUNE] validation = random window split (train={n_tr} val={n_val})")
+    ft_train_ds = train_dataset_full
+    ft_val_ds = val_dataset
+    print(f"[FINETUNE] adaptation={len(ft_train_ds)} validation={len(ft_val_ds)}")
 
     bs = int(batch_size or eval_batch_size)
     num_workers = int(num_workers)

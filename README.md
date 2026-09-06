@@ -87,7 +87,8 @@ python examples/quickstart.py
 | Reservoirs | 33 (23 source, 10 target) |
 | Static attributes | storage capacity, mean surface elevation, surface area, latitude, longitude, ground elevation |
 | Target records | most recent 10 years, split chronologically 70 / 15 / 15 |
-| Adaptation validation | a random 10 % of the support windows, held out for early stopping |
+| Adaptation validation | the target's own validation block selects the adapted checkpoint |
+| Split embargo | the leading 36 windows of the validation and test blocks are dropped (input window + horizon − 1) |
 
 Six transfer scenarios: within-regime (`snow2snow`, `rain2rain`), cross-regime
 (`snow2rain`, `rain2snow`) and mixed-source (`mixed2snow`, `mixed2rain`). Every scenario is
@@ -124,8 +125,8 @@ python -m rssd.cli.train --variant rssd_lstm --dataset snow_source_v2 --version 
 The variant selects the rung of the ladder; the run configuration is derived from the frozen
 defaults by applying that variant's profile, so the eight variants stay a controlled
 comparison rather than eight hand-maintained configurations. Add `--print-config` to see the
-resolved configuration without training, `--epochs` to cap the run, `--val-frac` to change
-the held-out share, and `--output-dir` to write elsewhere.
+resolved configuration without training, `--epochs` to cap the run, and `--output-dir` to
+write elsewhere.
 
 Checkpoints are written as `best_bundle.pt` and `avg_bundle.pt` (an average of the last
 improved states) under `logs/train_<domain>/<run group>/<version>/`. A bundle carries the
@@ -148,12 +149,12 @@ python -m rssd.cli.evaluate --scenario snow2rain --variant rssd_lstm
 The command reads the architecture back out of the checkpoint rather than re-specifying it,
 rebuilds the model for the target node set, restores the reservoir-ID embedding (or
 initialises an unseen target set from the source reservoirs), adapts on the target's recent
-history, and writes `per_reservoir_r2_*.csv`, `per_reservoir_daily_r2_*.csv`,
+history under the split protocol above, and writes `per_reservoir_r2_*.csv`,
+`per_reservoir_daily_r2_*.csv`,
 `metrics_summary_*.json`, `summary_row_*.csv` and a full run metadata record under
 `logs/eval_<domain>/`.
 
-Useful flags: `--val-frac` (the share of support windows held out for early stopping),
-`--no-finetune` (evaluate the source checkpoint directly), `--ckpt` (explicit checkpoint),
+Useful flags: `--no-finetune` (evaluate the source checkpoint directly), `--ckpt` (explicit checkpoint),
 `--output-dir` (write elsewhere), `--device`.
 
 ## Tests

@@ -77,7 +77,7 @@ def run_evaluation(scenario: str, variant: str, version: str = "v2", *, ckpt=Non
     datasets.assert_target_scaler_consistency(ds)
     _, _, _, _ = datasets.compute_train_scale_stats(ds)   # fail fast on an inconsistent scaler
 
-    support_dataset, test_dataset = datasets.build_target_datasets(ds)
+    support_dataset, val_dataset, test_dataset = datasets.build_target_datasets(ds)
     pin_memory = (torch.cuda.is_available() if cfg.eval_pin_memory is None
                   else bool(cfg.eval_pin_memory))
     test_loader = torch.utils.data.DataLoader(
@@ -142,10 +142,11 @@ def run_evaluation(scenario: str, variant: str, version: str = "v2", *, ckpt=Non
     if do_finetune:
         print(f"[FINETUNE] mode={cfg.finetune_mode} domain_shift={is_domain_shift}")
         model = finetune_on_target(
-            model=model, train_dataset_full=support_dataset, collate_fn=collate_zip,
+            model=model, train_dataset_full=support_dataset, val_dataset=val_dataset,
+            collate_fn=collate_zip,
             device=device, inv_pack_y=inv_pack_y, max_epochs=cfg.finetune_max_epochs,
             lr=cfg.finetune_lr, weight_decay=cfg.finetune_weight_decay,
-            grad_clip=cfg.finetune_grad_clip, val_frac=cfg.finetune_val_frac,
+            grad_clip=cfg.finetune_grad_clip,
             patience=cfg.finetune_patience, seed=cfg.finetune_seed,
             mode=cfg.finetune_mode, eval_batch_size=cfg.eval_batch_size,
             num_workers=cfg.eval_num_workers, pin_memory=pin_memory,
@@ -201,6 +202,8 @@ def run_evaluation(scenario: str, variant: str, version: str = "v2", *, ckpt=Non
         "meta_feature_strengths": [float(v) for v in ckpt_cfg.meta_feature_strengths],
         "res_static_dim": ckpt_cfg.res_static_dim, "num_nodes_eval": ds.num_nodes,
         "target_support_samples": int(len(support_dataset)),
+        "target_validation_samples": int(len(val_dataset)),
+        "target_test_samples": int(len(test_dataset)),
         "reservoir_names_in_node_order": list(ds.reservoir_names_in_node_order),
         "ckpt_meta": ckpt_meta,
         "use_meta_emb_init": cfg.use_meta_emb_init,
@@ -283,9 +286,6 @@ def build_parser() -> argparse.ArgumentParser:
                    help="write outputs here instead of the standard logs/eval_* location")
     p.add_argument("--no-finetune", action="store_true",
                    help="evaluate the source checkpoint without target-history adaptation")
-    p.add_argument("--val-frac", type=float, default=None,
-                   help="share of the support windows held out for adaptation early "
-                        "stopping (default: 0.10)")
     p.add_argument("--finetune-epochs", type=int, default=None)
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--no-outputs", action="store_true", help="compute metrics without writing files")
@@ -323,8 +323,6 @@ def main(argv=None):
         cfg.finetune_max_epochs = args.finetune_epochs
     if args.seed is not None:
         cfg.seed = args.seed
-    if args.val_frac is not None:
-        cfg.finetune_val_frac = args.val_frac
 
     result = run_evaluation(args.scenario, args.variant, args.version, ckpt=args.ckpt, cfg=cfg,
                             device=args.device, output_dir=args.output_dir,

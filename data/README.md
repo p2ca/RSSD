@@ -2,8 +2,7 @@
 
 What ships here: the frozen reservoir lists (`reservoirs_<pool>.txt`), one identifier per
 line, in the node order the models and metrics are indexed by. They define the source and
-target pools of the main partition and of the three alternative partitions. Lists from
-superseded protocol versions are not carried.
+target pools of the main partition and of the three alternative partitions.
 
 What does not ship: the reservoir records themselves and everything derived from them.
 Point `RSSD_DATA` at a directory that holds them:

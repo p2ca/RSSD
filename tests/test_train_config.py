@@ -108,10 +108,10 @@ class OverrideTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             cfg_for("rssd_lstm", overrides={"nonexistent_section": {"x": 1}})
 
-    def test_validation_fraction_is_the_frozen_value(self):
-        self.assertEqual(cfg_for("rssd_lstm")["data"]["VAL_FRAC"], 0.10)
-        self.assertEqual(cfg_for("rssd_lstm", overrides={"data": {"VAL_FRAC": 0.2}})
-                         ["data"]["VAL_FRAC"], 0.2)
+    def test_batch_size_is_the_frozen_value_and_can_be_overridden(self):
+        self.assertEqual(cfg_for("rssd_lstm")["data"]["BATCH_SIZE"], 128)
+        self.assertEqual(cfg_for("rssd_lstm", overrides={"data": {"BATCH_SIZE": 64}})
+                         ["data"]["BATCH_SIZE"], 64)
 
 
 if __name__ == "__main__":

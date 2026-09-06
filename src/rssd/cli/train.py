@@ -38,9 +38,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--device", default=None, help="cuda:0 / cpu (default: cuda when available)")
     p.add_argument("--output-dir", default=None,
                    help="write checkpoints here instead of the standard logs/train_* location")
-    p.add_argument("--val-frac", type=float, default=None,
-                   help="share of the training windows held out for early stopping "
-                        "(default: 0.10)")
     p.add_argument("--no-save", action="store_true", help="run without writing checkpoints")
     p.add_argument("--print-config", action="store_true",
                    help="print the resolved configuration and exit without training")
@@ -70,8 +67,6 @@ def main(argv=None):
         build_parser().error("--variant and --dataset are required unless --list-runs is given")
 
     overrides = {}
-    if args.val_frac is not None:
-        overrides.setdefault("data", {})["VAL_FRAC"] = args.val_frac
 
     # only the alignment baselines consult a target pool; leave the field untouched otherwise
     needs_target = MODEL_VARIANTS.get(args.variant, {}).get("align_method", "none") != "none"

@@ -56,20 +56,24 @@ class ParsedDatasetTests(unittest.TestCase):
         self.assertTrue((scale_arr > 0).all())
         self.assertTrue((var_arr > 0).all())
 
-    def test_source_validation_is_held_out_of_the_training_windows(self):
-        val_frac = 0.10
-        train, val, test = self.datasets.build_datasets(
-            self.ds, val_frac=val_frac, seed=42)
-        n_train_windows = self.ds.X_train.shape[0]
-        self.assertEqual(len(train) + len(val), n_train_windows)
-        self.assertEqual(len(val), int(n_train_windows * val_frac))
-        self.assertEqual(len(test), self.ds.X_test.shape[0])
+    def test_embargo_is_the_input_window_plus_the_horizon(self):
+        self.assertEqual(self.datasets.resolve_embargo_windows(self.ds), 30 + 7 - 1)
 
-    def test_target_support_and_test_are_the_complete_blocks(self):
-        support, test = self.datasets.build_target_datasets(self.ds)
-        # the adaptation routine holds out its own early-stopping split from the support
+    def test_source_training_uses_every_training_window(self):
+        train, val, test = self.datasets.build_datasets(self.ds)
+        embargo = self.datasets.resolve_embargo_windows(self.ds)
+        self.assertEqual(len(train), self.ds.X_train.shape[0])
+        self.assertEqual(len(test), self.ds.X_test.shape[0] - embargo)
+        self.assertGreater(len(val), 0)
+
+    def test_validation_and_test_blocks_are_embargoed_at_the_head(self):
+        support, val, test = self.datasets.build_target_datasets(self.ds)
+        embargo = self.datasets.resolve_embargo_windows(self.ds)
         self.assertEqual(len(support), self.ds.X_train.shape[0])
-        self.assertEqual(len(test), self.ds.X_test.shape[0])
+        self.assertEqual(len(test), self.ds.X_test.shape[0] - embargo)
+        # the validation block is scored on its own windows, never on support windows
+        self.assertGreater(len(val), 0)
+        self.assertLess(len(val), len(support))
 
 
 if __name__ == "__main__":
