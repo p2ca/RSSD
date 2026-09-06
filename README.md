@@ -25,9 +25,6 @@ transfer.
 
 ## Data
 
-This repository contains the model, the data pipeline, the training and evaluation engines,
-and the analysis entry points.
-
 Inflow comes from the USACE reservoir-data platform maintained by the Nicholas Institute at
 Duke University, and the meteorological drivers from the Daymet and Livneh products; all are
 obtained from their providers rather than redistributed here. Point the package at your own
