@@ -3,12 +3,9 @@
 One run is fully described by a single configuration dictionary, built by
 :func:`rssd.config.build_train_cfg`.
 
-The loop selects on the validation normalised MAE (validation loss for the
-attribute-only variant), keeps the best state on CPU, maintains a queue of the last
-improved checkpoints for weight averaging, and stops on either the patience counter or a
-learning rate that has bottomed out. It writes ``best_bundle.pt`` and, when averaging is
-enabled, ``avg_bundle.pt`` -- the same bundle contents evaluation reads its architecture
-back out of.
+The loop selects on the validation loss, keeps the best state on CPU, and stops once the
+patience counter runs out. It writes ``best_bundle.pt``, which carries the architecture
+evaluation reads back out of.
 """
 
 from __future__ import annotations
@@ -24,7 +21,6 @@ from rssd.config import train_run_dir
 from rssd.data import datasets, static_attrs
 from rssd.data.scalers import build_local_y_inverse_tensors
 from rssd.engine.trainer import evaluate_model, run_epoch
-from rssd.io.bundle import _average_state_dicts
 from rssd.models import builder
 from rssd.objectives.schedules import get_mmd_weight
 from rssd.utils import TrainingLogger, seed_everything
@@ -181,7 +177,6 @@ def train_source_model(cfg: dict, *, device=None, output_dir=None, max_epochs=No
     logger = TrainingLogger(model_name, str(exp["SCALER_TYPE"]), log_dir_override=log_dir,
                             timestamp_override=datetime.now().strftime("%Y%m%d%H%M"))
     best_path = os.path.join(logger.log_dir, "best_bundle.pt")
-    avg_path = os.path.join(logger.log_dir, "avg_bundle.pt")
 
     criterion = nn.SmoothL1Loss(beta=1.0, reduction="none")
     inv_pack_y = build_local_y_inverse_tensors(ds.scaler_data,
@@ -200,8 +195,8 @@ def train_source_model(cfg: dict, *, device=None, output_dir=None, max_epochs=No
 
     max_epochs = int(max_epochs or tr["MAX_EPOCHS"])
     best_metric, best_epoch, best_state_cpu, best_val_loss = 1e18, -1, None, None
-    best_metric_name = "val_normMAE_mean"
-    best_bundle, no_improve, avg_state_queue = None, 0, []
+    best_metric_name = "val_loss"
+    best_bundle, no_improve = None, 0
     history = []
 
     # ---------------------------------------------------------------- epochs
@@ -225,10 +220,8 @@ def train_source_model(cfg: dict, *, device=None, output_dir=None, max_epochs=No
             align_weight=0.0, domain_discriminator=discriminator,
             mmd_weight=0.0, **epoch_kwargs)
 
-        if bool(m["use_meta_only_static"]):
-            selection_metric, selection_metric_name = float(val_loss), "val_loss"
-        else:
-            selection_metric, selection_metric_name = float(val_mae), "val_normMAE_mean"
+        # the manuscript retains the checkpoint with the lowest validation loss
+        selection_metric, selection_metric_name = float(val_loss), "val_loss"
 
         current_lr = optimizer.param_groups[0]["lr"]
         if scheduler is not None:
@@ -242,9 +235,7 @@ def train_source_model(cfg: dict, *, device=None, output_dir=None, max_epochs=No
                         "train_mae": float(train_mae), "val_loss": float(val_loss),
                         "val_mae": float(val_mae), "lr": float(current_lr)})
 
-        threshold = max(float(tr["MIN_DELTA"]),
-                        float(tr["MIN_DELTA_REL"]) * max(float(best_metric), 1e-6))
-        if (best_metric - selection_metric) > threshold:
+        if selection_metric < best_metric:
             best_metric, best_metric_name = selection_metric, selection_metric_name
             best_epoch, best_val_loss, no_improve = epoch, val_loss, 0
 
@@ -261,49 +252,20 @@ def train_source_model(cfg: dict, *, device=None, output_dir=None, max_epochs=No
                 torch.save(best_bundle, best_path)
                 print(f"[CKPT] saved best bundle at epoch {epoch} -> {best_path}")
 
-            if bool(tr["USE_CHECKPOINT_AVG"]):
-                avg_state_queue.append({k: v.clone() for k, v in best_state_cpu.items()})
-                keep_k = max(1, int(tr["CHECKPOINT_AVG_LAST_K"]))
-                avg_state_queue = avg_state_queue[-keep_k:]
-
             logger.save_checkpoint(model, optimizer, epoch, val_mae)
         else:
             no_improve += 1
 
-        if (epoch >= int(tr["EARLY_STOP_MIN_EPOCHS"])) and (no_improve >= int(tr["EARLY_STOP_PATIENCE"])):
+        if no_improve >= int(tr["EARLY_STOP_PATIENCE"]):
             print(f"Early stopping at epoch {epoch} (best epoch={best_epoch}, "
                   f"best {best_metric_name}={best_metric:.6f})")
             break
-        if bool(tr["STOP_ON_MIN_LR"]) and (scheduler is not None):
-            min_lr = float(getattr(scheduler, "min_lrs", [1e-5])[0])
-            if (epoch >= int(tr["EARLY_STOP_MIN_EPOCHS"]) and current_lr <= min_lr + 1e-12
-                    and no_improve >= int(tr["STOP_ON_MIN_LR_PATIENCE"])):
-                print(f"[EARLY STOP] lr reached min_lr={min_lr:g} with no_improve={no_improve} "
-                      f"(best epoch={best_epoch}, best_metric={best_metric:.6f})")
-                break
 
     print(f"[BEST] epoch={best_epoch} best {best_metric_name}={best_metric:.6f}")
 
     # ---------------------------------------------------------------- finalize
     final_state_cpu, final_state_tag = best_state_cpu, "best"
     written = {}
-    if bool(tr["USE_CHECKPOINT_AVG"]) and avg_state_queue:
-        avg_state_cpu = _average_state_dicts(avg_state_queue)
-        if avg_state_cpu is not None:
-            avg_bundle = dict(
-                state_dict=avg_state_cpu, best_epoch=int(best_epoch),
-                best_metric=float(best_metric),
-                avg_num_checkpoints=int(len(avg_state_queue)),
-                avg_checkpoint_mode="last_improved",
-                config=best_bundle["config"] if best_bundle is not None else {},
-                train_res_static_cpu=(res_static.detach().cpu() if res_static is not None else None),
-                train_meta_static_cpu=(meta_static.detach().cpu() if meta_static is not None else None),
-                **_bundle_meta(cfg, ds, model_name))
-            if save_bundles:
-                torch.save(avg_bundle, avg_path)
-                written["avg_bundle"] = avg_path
-                print("[CKPT] averaged bundle written ->", avg_path)
-            final_state_cpu, final_state_tag = avg_state_cpu, f"avg_last{len(avg_state_queue)}"
 
     if final_state_cpu is not None:
         model.load_state_dict({k: t.to(device) for k, t in final_state_cpu.items()})

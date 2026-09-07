@@ -17,18 +17,13 @@ embedding, and reservoir attributes condition the recomposed state *after* the
 decomposition, so the three sources of reservoir information play distinct roles in
 transfer.
 
-> Status: research code accompanying a journal manuscript in preparation. It extends the
-> conference paper *Domain-Adaptive Reservoir Inflow Forecasting via Invariant-Basis
-> Representation Decomposition* (ACM AI Leadership Summit 2026).
-
----
-
 ## Data
 
-Inflow comes from the USACE reservoir-data platform maintained by the Nicholas Institute at
-Duke University, and the meteorological drivers from the Daymet and Livneh products; all are
-obtained from their providers rather than redistributed here. Point the package at your own
-copy:
+Inflow, storage and water-surface elevation come from the USACE reservoir-data platform
+maintained by the Nicholas Institute at Duke University; precipitation and air temperature
+from the Daymet and Livneh products; reservoir surface area from the National Inventory of
+Dams and dam-site elevation from the USGS Elevation Point Query Service. All are obtained
+from their providers rather than redistributed here. Point the package at your own copy:
 
 ```bash
 export RSSD_DATA=/path/to/data     # reservoirs_*.txt, meta/, parsed/, align/
@@ -43,8 +38,8 @@ Both default to `data/` and `logs/` inside the checkout.
 pip install -e .
 ```
 
-Python 3.10+ with PyTorch 2.1+. The published runs used Python 3.10, PyTorch 2.8 (CUDA 12.8)
-on a single NVIDIA RTX 3060.
+Python 3.10+ with PyTorch 2.1+. The environment and hardware behind the reported runs are
+recorded in the manuscript.
 
 ## Layout
 
@@ -95,7 +90,7 @@ generator.
 | Input window | 30 days |
 | Forecast horizon | lead days 1–7 |
 | Reservoirs | 33 (23 source, 10 target) |
-| Static attributes | storage capacity, mean surface elevation, surface area, latitude, longitude, ground elevation |
+| Static attributes | maximum recorded storage, mean water-surface elevation, surface area, latitude, longitude, dam-site elevation |
 | Target records | most recent 10 years, split chronologically 70 / 15 / 15 |
 | Adaptation validation | the target's own validation block selects the adapted checkpoint |
 | Split embargo | the leading 36 windows of the validation and test blocks are dropped (input window + horizon − 1) |
@@ -146,14 +141,14 @@ python -m rssd.cli.train --variant rssd_lstm --dataset snow_source_v2 --version 
 ```
 
 The variant selects the rung of the ladder; the run configuration is derived from the frozen
-defaults by applying that variant's profile, so the eight variants stay a controlled
-comparison rather than eight hand-maintained configurations. Add `--print-config` to see the
+defaults by applying that variant's profile, so the variants stay a controlled comparison
+rather than nine hand-maintained configurations. Add `--print-config` to see the
 resolved configuration without training, `--epochs` to cap the run, and `--output-dir` to
 write elsewhere.
 
-Checkpoints are written as `best_bundle.pt` and `avg_bundle.pt` (an average of the last
-improved states) under `logs/train_<domain>/<run group>/<version>/`. A bundle carries the
-architecture it was trained with, which is what evaluation reads back.
+The checkpoint with the lowest validation loss is written as `best_bundle.pt` under
+`logs/train_<domain>/<run group>/<version>/`. A bundle carries the architecture it was
+trained with, which is what evaluation reads back.
 
 `configs/experiments.yaml` records the runs behind the reported comparison; both commands can
 print them:
@@ -210,8 +205,7 @@ suite runs anywhere.
 
 ## Citation
 
-A citation entry will be added when the manuscript is published. Until then, please cite the
-conference paper.
+A citation entry will be added when the manuscript is published.
 
 ## License
 

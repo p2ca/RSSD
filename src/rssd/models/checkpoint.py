@@ -112,7 +112,7 @@ def load_checkpoint_config(ckpt_path, expected_dataset_tag=None, expected_scaler
     Parameters
     ----------
     ckpt_path
-        Path to ``best_bundle.pt`` / ``avg_bundle.pt``.
+        Path to ``best_bundle.pt``.
     expected_dataset_tag, expected_scaler_type
         When given, the bundle must have been trained with exactly these, otherwise the
         evaluation would silently mix protocols.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 
-__all__ = ["_load_state_dict_any", "_average_state_dicts"]
+__all__ = ["_load_state_dict_any"]
 
 def _load_state_dict_any(path):
     ckpt = torch.load(path, map_location="cpu")
@@ -17,23 +17,3 @@ def _load_state_dict_any(path):
         if all(isinstance(v, torch.Tensor) for v in ckpt.values()):
             return ckpt, {"raw_state_dict": True}
     raise RuntimeError(f"Unrecognized checkpoint format: {path}")
-
-
-def _average_state_dicts(state_list):
-    if not state_list:
-        return None
-    keys = list(state_list[0].keys())
-    out = {}
-    n = float(len(state_list))
-    for k in keys:
-        ref = state_list[0][k]
-        if torch.is_tensor(ref) and ref.dtype.is_floating_point:
-            acc = None
-            for sd in state_list:
-                t = sd[k].detach().to(dtype=torch.float32)
-                acc = t.clone() if acc is None else (acc + t)
-            out[k] = (acc / n).to(dtype=ref.dtype)
-        else:
-            # non-floating buffers / counters: keep the latest one
-            out[k] = ref.detach().cpu().clone() if torch.is_tensor(ref) else ref
-    return out

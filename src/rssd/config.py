@@ -218,16 +218,7 @@ DEFAULT_TRAIN_CFG = {
         "GRAD_CLIP_NORM": 0.5,
 
         "MAX_EPOCHS": 200,
-        "EARLY_STOP_PATIENCE": 20,
-        "MIN_DELTA": 1e-3,
-        "MIN_DELTA_REL": 0.005,
-        "EARLY_STOP_MIN_EPOCHS": 25,
-
-        "STOP_ON_MIN_LR": True,
-        "STOP_ON_MIN_LR_PATIENCE": 4,
-
-        "USE_CHECKPOINT_AVG": True,
-        "CHECKPOINT_AVG_LAST_K": 5,
+        "EARLY_STOP_PATIENCE": 10,
     },
 
     "data": {

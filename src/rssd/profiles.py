@@ -89,11 +89,6 @@ def _apply_train_exp_overrides(cfg: dict) -> dict:
                 f"exp4_meta_pure_lstm requires len(meta_feature_names)==meta_only_static_dim, "
                 f"got {len(m['meta_feature_names'])} vs {m['meta_only_static_dim']}"
             )
-        tr = cfg["train"]
-        tr["MIN_DELTA"] = 1e-4
-        tr["MIN_DELTA_REL"] = 0.0
-        tr["EARLY_STOP_MIN_EPOCHS"] = max(int(tr["EARLY_STOP_MIN_EPOCHS"]), 25)
-        tr["EARLY_STOP_PATIENCE"] = max(int(tr["EARLY_STOP_PATIENCE"]), 20)
 
     elif exp_name == "exp6_context_lstm":
         # full_model backbone + reservoir embedding only; no attributes, no RSSD layer
