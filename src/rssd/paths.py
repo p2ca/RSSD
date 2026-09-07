@@ -20,6 +20,10 @@ so ``RSSD_DATA`` and ``RSSD_LOGS`` normally point at a local working copy:
 
     export RSSD_DATA=/path/to/reservoir_data
     export RSSD_LOGS=/path/to/runs
+
+``RSSD_DATA`` can also point at the synthetic sample bundle shipped in ``data/sample``
+(:data:`SAMPLE_DATA_DIR`), which has the same layout and lets the whole pipeline run
+without the reservoir records.
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ import os
 from pathlib import Path
 
 __all__ = [
-    "PROJECT_ROOT", "DATA_DIR", "LOGS_DIR",
+    "PROJECT_ROOT", "DATA_DIR", "LOGS_DIR", "SAMPLE_DATA_DIR",
     "parsed_dir", "reservoir_list", "meta_dir", "align_dir",
     "train_log_dir", "eval_log_dir",
 ]
@@ -42,6 +46,10 @@ def _env_path(name: str, default: Path) -> Path:
 PROJECT_ROOT: Path = _env_path("RSSD_ROOT", Path(__file__).resolve().parents[2])
 DATA_DIR: Path = _env_path("RSSD_DATA", PROJECT_ROOT / "data")
 LOGS_DIR: Path = _env_path("RSSD_LOGS", PROJECT_ROOT / "logs")
+
+# The synthetic bundle shipped with the code, so the pipeline can be run without the
+# reservoir records. It has the same layout as RSSD_DATA: align/, meta/, reservoirs_*.txt.
+SAMPLE_DATA_DIR: Path = Path(__file__).resolve().parents[2] / "data" / "sample"
 
 
 def parsed_dir(dataset_tag: str) -> Path:

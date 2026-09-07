@@ -114,12 +114,11 @@ def build_local_y_inverse_tensors(scaler_data, reservoir_names_in_node_order, de
     raise TypeError(f"Unsupported local y scaler type: {type(sc0)}")
 
 
-def inverse_y_scaled_to_phys_torch(y_scaled, inv_pack, y_transform: str):
-    """
-    y_scaled: torch.Tensor shape (nodes, pred_len)
-    inv_pack: from build_local_y_inverse_tensors
-    y_transform: 'log1p' or 'none'
-    return: y_phys (nodes, pred_len) in physical inflow space
+def inverse_y_scaled_to_phys_torch(y_scaled, inv_pack):
+    """Undo the min-max scaling of one batch of targets.
+
+    ``y_scaled`` is ``(nodes, pred_len)`` and ``inv_pack`` comes from
+    :func:`build_local_y_inverse_tensors`; the result is inflow in physical units.
     """
     if inv_pack["type"] == "minmax":
         dmin = inv_pack["dmin"][:, None]
@@ -130,23 +129,12 @@ def inverse_y_scaled_to_phys_torch(y_scaled, inv_pack, y_transform: str):
         denom_dm = (dmax - dmin).clamp_min(1e-6)
 
         # sklearn: X_std=(x-fr_min)/(fr_max-fr_min); X = X_std*(dmax-dmin)+dmin
-        z = ((y_scaled - fr_min) / denom_fr) * denom_dm + dmin   # z = transformed space (log1p(inflow)) if y_transform='log1p'
+        y_phys = ((y_scaled - fr_min) / denom_fr) * denom_dm + dmin
 
     elif inv_pack["type"] == "standard":
-        z = y_scaled * inv_pack["std"][:, None] + inv_pack["mu"][:, None]
+        y_phys = y_scaled * inv_pack["std"][:, None] + inv_pack["mu"][:, None]
     else:
         raise RuntimeError("unknown inv_pack type")
-    
-    # z is the value inverted back into the transformed space, i.e. log1p(inflow)
-    if y_transform in ("log1p", "signed_log1p"):
-        # physical inflow is non-negative, so clamp z at 0: a negative z would expm1 into a
-        # large negative inflow and blow up the loss
-        z = torch.clamp(z, min=0.0)
-        y_phys = torch.expm1(z)
-    elif y_transform == "none":
-        y_phys = z
-    else:
-        raise ValueError(f"unsupported y_transform for torch inverse: {y_transform}")
 
     return y_phys
 

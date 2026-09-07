@@ -60,7 +60,6 @@ def run_epoch(
     loader,
     criterion,
     inv_pack_y,
-    y_transform,
     y_scale_t,
     optimizer=None,
     train=True,
@@ -215,8 +214,8 @@ def run_epoch(
                     fr_max = float(inv_pack_y_step["fr_max"])
                     y_hat_scaled = torch.clamp(y_hat_scaled, min=fr_min, max=fr_max)
 
-                y_hat_phys = inverse_y_scaled_to_phys_torch(y_hat_scaled, inv_pack_y_step, y_transform)
-                tgt_phys   = inverse_y_scaled_to_phys_torch(tgt2,         inv_pack_y_step, y_transform)
+                y_hat_phys = inverse_y_scaled_to_phys_torch(y_hat_scaled, inv_pack_y_step)
+                tgt_phys   = inverse_y_scaled_to_phys_torch(tgt2,         inv_pack_y_step)
 
                 scale_floor = torch.quantile(y_scale_step, 0.10)
                 den = (torch.clamp(y_scale_step, min=scale_floor)[:, None] + eps)

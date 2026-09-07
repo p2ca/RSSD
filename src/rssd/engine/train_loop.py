@@ -184,7 +184,6 @@ def train_source_model(cfg: dict, *, device=None, output_dir=None, max_epochs=No
     avg_path = os.path.join(logger.log_dir, "avg_bundle.pt")
 
     criterion = nn.SmoothL1Loss(beta=1.0, reduction="none")
-    y_transform = ds.scaler_data.get("params", {}).get("y_transform", "none")
     inv_pack_y = build_local_y_inverse_tensors(ds.scaler_data,
                                                ds.reservoir_names_in_node_order, device)
     y_scale_t = torch.tensor(scale_arr, device=device, dtype=torch.float32)
@@ -213,14 +212,14 @@ def train_source_model(cfg: dict, *, device=None, output_dir=None, max_epochs=No
             ramp=int(adapt["MMD_RAMP_EPOCHS"])) if use_align else 0.0
 
         train_loss, train_mae = run_epoch(
-            model, loaders["train"], criterion, inv_pack_y, y_transform, y_scale_t,
+            model, loaders["train"], criterion, inv_pack_y, y_scale_t,
             optimizer=optimizer, train=True, device=device, epoch=epoch,
             target_loader=target_loader, align_method=align_method,
             align_weight=lambda_align, domain_discriminator=discriminator,
             mmd_weight=lambda_align, **epoch_kwargs)
 
         val_loss, val_mae = run_epoch(
-            model, loaders["val"], criterion, inv_pack_y, y_transform, y_scale_t,
+            model, loaders["val"], criterion, inv_pack_y, y_scale_t,
             optimizer=None, train=False, device=device, epoch=epoch,
             target_loader=None, align_method=align_method,
             align_weight=0.0, domain_discriminator=discriminator,
@@ -322,5 +321,5 @@ def train_source_model(cfg: dict, *, device=None, output_dir=None, max_epochs=No
         "best_val_loss": float(best_val_loss) if best_val_loss is not None else None,
         "final_state_tag": final_state_tag, "history": history,
         "dataset": ds, "loaders": loaders, "inv_pack_y": inv_pack_y,
-        "criterion": criterion, "y_transform": y_transform, "y_scale_t": y_scale_t,
+        "criterion": criterion, "y_scale_t": y_scale_t,
     }

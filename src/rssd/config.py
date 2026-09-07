@@ -44,6 +44,10 @@ SCENARIOS = {
                        source_domain="mixed", target_domain="snow"),
     "mixed2rain": dict(source_tag="mixed_source_v2", eval_tag="rain_target_v2",
                        source_domain="mixed", target_domain="rain"),
+    # transfer between the two synthetic pools of the sample bundle; present so the
+    # pipeline can be exercised end to end without the reservoir records.
+    "sample2sample": dict(source_tag="sample_source", eval_tag="sample_target",
+                          source_domain="sample", target_domain="sample"),
 }
 
 

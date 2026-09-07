@@ -3,6 +3,7 @@ logs/
 data/parsed/
 data/align/
 data/meta/
+data/sample/parsed/
 *.pt
 *.pth
 *.npz

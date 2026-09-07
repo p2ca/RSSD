@@ -54,17 +54,38 @@ src/rssd/
 ├── config.py        transfer scenarios, model variants, run configuration, manifest
 ├── profiles.py      the experiment profiles behind the variant ladder
 ├── metrics.py       correlation helpers, per-reservoir and per-lead-day NSE
-├── data/            parsed tensors, scalers, static attributes
+├── data/            preprocessing, parsed tensors, scalers, static attributes
 ├── models/          Seq2SeqLSTM with the RSSD layer, checkpoint-locked model building
 ├── objectives/      alignment losses (MMD / CORAL / DANN) and the alignment-weight schedule
 ├── engine/          source training, target-history fine-tuning and evaluation
 ├── io/              checkpoint bundles and structured run outputs
+├── figures/         the results figures, drawn from the evaluation outputs
 └── cli/             command-line entry points
 
 configs/experiments.yaml   which variants were trained on which sources, and the scenarios
 data/reservoirs_*.txt      the frozen reservoir pools, in node order
+data/sample/               five simulated records, enough to run the pipeline end to end
 tests/                     runs anywhere; data-dependent tests skip themselves
 ```
+
+## Running without the reservoir records
+
+`data/sample/` holds five **simulated** reservoir records with the same column layout as
+the real ones. They are not observations; they are there so the pipeline can be run and
+the input contract inspected. Three commands take them from raw records to a scored
+forecast:
+
+```bash
+python -m rssd.cli.preprocess --dataset sample_source --role source
+python -m rssd.cli.preprocess --dataset sample_target --role target
+
+export RSSD_DATA=$PWD/data/sample
+python -m rssd.cli.train --variant rssd_lstm --dataset sample_source --version sample
+python -m rssd.cli.evaluate --scenario sample2sample --variant rssd_lstm --version sample
+```
+
+See [`data/sample/README.md`](data/sample/README.md) for the column contract and the
+generator.
 
 ## Forecasting task and protocol
 
@@ -104,6 +125,19 @@ The `--variant` keys are command-line identifiers and are unchanged; the model c
 name each variant carries in the manuscript.
 
 `rssd_transformer` replaces both the recurrent encoder and its multi-horizon head with a Transformer encoder–decoder (`backbone="transformer_seq2seq"`); every lead day attends to the complete encoded history.
+
+## Preprocessing
+
+```bash
+python -m rssd.cli.preprocess --dataset snow_source_v2 --role source --data-root $RSSD_DATA
+```
+
+This is the step in front of everything else: it reads the daily records named in
+`reservoirs_<dataset tag>.txt` from `<data root>/align/`, keeps a target pool's most recent
+ten years, cuts 30-day input windows against a 7-day horizon, splits each reservoir
+chronologically 70 / 15 / 15, fits one min-max scaler per reservoir on its own training
+block, and writes `parsed/<dataset tag>/`. With no `--data-root` and no `RSSD_DATA` it
+reads the sample bundle.
 
 ## Training a source model
 
@@ -145,6 +179,25 @@ history under the split protocol above, and writes `per_reservoir_r2_*.csv`,
 
 Useful flags: `--no-finetune` (evaluate the source checkpoint directly), `--ckpt` (explicit checkpoint),
 `--output-dir` (write elsewhere), `--device`.
+
+## Figures
+
+```bash
+python -m rssd.cli.figures --all
+```
+
+Draws the two reservoir-level NSE stability figures of the results section: one comparing
+the LSTM baseline, the three reservoir-information variants and RSSD, the other comparing
+the alignment baselines with RSSD. For each model, target reservoir and lead day the NSE
+of the two single-regime scenarios reaching that target is averaged, and each of the seven
+daily values is assigned to an NSE class, so one stacked bar reports how many lead days
+fall in each class.
+
+They read the `per_reservoir_daily_r2_*.csv` written by `rssd.cli.evaluate`, so
+`snow2snow`, `rain2snow`, `rain2rain` and `snow2rain` must have been evaluated for every
+model in the figure. Where a run directory holds several evaluations the most recent is
+used and named on stdout; `--timestamp` pins one. Needs the optional extra:
+`pip install -e ".[figures]"`.
 
 ## Tests
 

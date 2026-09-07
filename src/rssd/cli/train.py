@@ -21,7 +21,8 @@ __all__ = ["main", "build_parser"]
 
 # alignment baselines need an unlabelled target pool to align against
 DEFAULT_ALIGN_TARGET = {"snow_source_v2": "rain_target_v2", "rain_source": "snow_target_v2",
-                        "mixed_source_v2": "rain_target_v2"}
+                        "mixed_source_v2": "rain_target_v2",
+                        "sample_source": "sample_target"}
 
 
 def build_parser() -> argparse.ArgumentParser:

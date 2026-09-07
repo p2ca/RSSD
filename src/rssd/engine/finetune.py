@@ -42,7 +42,6 @@ def run_epoch(
     loader,
     criterion,
     inv_pack_y,
-    y_transform,
     y_scale_t,
     optimizer=None,
     train=True,
@@ -100,8 +99,8 @@ def run_epoch(
                 # -------- main loss pipeline --------
                 y_hat_scaled = link_pred_to_scaled(y_hat_raw, inv_pack_y)
 
-                y_hat_phys = inverse_y_scaled_to_phys_torch(y_hat_scaled, inv_pack_y, y_transform)
-                tgt_phys   = inverse_y_scaled_to_phys_torch(tgt2,         inv_pack_y, y_transform)
+                y_hat_phys = inverse_y_scaled_to_phys_torch(y_hat_scaled, inv_pack_y)
+                tgt_phys   = inverse_y_scaled_to_phys_torch(tgt2,         inv_pack_y)
 
                 scale_floor = torch.quantile(y_scale_t, 0.10)
                 den = (torch.clamp(y_scale_t, min=scale_floor)[:, None] + eps)

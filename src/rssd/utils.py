@@ -130,14 +130,6 @@ def build_supervised_split_from_reservoir_blocks(
     return X, y
 
 
-# -------------------------
-# transforms for inflow
-# -------------------------
-def signed_expm1(x: np.ndarray) -> np.ndarray:
-    """Inverse of signed_log1p: sign(x)*(exp(|x|)-1)."""
-    return np.sign(x) * (np.expm1(np.abs(x)))
-
-
 def _build_idx_to_reservoir_strict(encode_map, n_nodes: int):
     """
     Support two formats:
@@ -184,7 +176,6 @@ def _build_idx_to_reservoir_strict(encode_map, n_nodes: int):
 def inverse_transform_predictions(predictions, targets, scaler_data, encode_map=None):
     """
     Unified inverse transform for both global/local scalers.
-    Supports optional y_transform inversion (e.g., signed_log1p).
     STRICT for local: requires correct idx<->reservoir alignment.
     """
     predictions = np.asarray(predictions)
@@ -197,7 +188,6 @@ def inverse_transform_predictions(predictions, targets, scaler_data, encode_map=
 
     n_samples, n_nodes, n_days = predictions.shape
     scaler_type = scaler_data.get("params", {}).get("scaler_type", "global")
-    y_transform = scaler_data.get("params", {}).get("y_transform", "none")
 
     if scaler_type == "global":
         scaler_y = scaler_data["scaler_y"]
@@ -242,14 +232,6 @@ def inverse_transform_predictions(predictions, targets, scaler_data, encode_map=
     else:
         raise ValueError(f"Invalid scaler_type: {scaler_type}. Must be 'global' or 'local'.")
 
-    # invert robust transform if enabled
-    if y_transform == "log1p":
-        pred_inv = np.expm1(pred_inv)
-        targ_inv = np.expm1(targ_inv)
-    elif y_transform == "signed_log1p":
-        pred_inv = signed_expm1(pred_inv)
-        targ_inv = signed_expm1(targ_inv)
-    
     return pred_inv, targ_inv
 
 
