@@ -69,7 +69,6 @@ def _metrics_summary_dict(
         "finetune_mode": str(eval_meta.get("finetune_mode", "disabled")),
         "target_support_samples": eval_meta.get("target_support_samples"),
         "use_darsd": bool(eval_meta.get("use_darsd")),
-        "use_err_head": bool(eval_meta.get("use_err_head")),
         "use_res_static": bool(eval_meta.get("use_res_static")),
         "latent_mode": str(eval_meta.get("latent_mode")),
     }

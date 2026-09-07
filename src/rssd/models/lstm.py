@@ -11,27 +11,19 @@ class Seq2SeqLSTM(nn.Module):
         num_layers: int,
         output_dim: int,
         pred_len: int,
-        use_direct_head: bool = False,   # B2: direct multi-horizon head (non-autoregressive)
         dropout: float = 0.0,
         use_reservoir_emb: bool = False,
         num_reservoirs: int = 135,
         reservoir_emb_dim: int = 16,
-        use_res_static: bool = False,      # Step2.3
-        res_static_dim: int = 0,           # Step2.3
-        res_static_mode: str = "latent",   # legacy config key; v16+ uses latent-stage metadata injection
-        film_gamma_scale: float = 0.10,    # FiLM gamma amplitude (safety)
-        film_beta_scale: float = 0.10,     # FiLM beta amplitude (safety)
-        use_meta_only_static: bool = False,   # exp4: metadata + pure_lstm
-        meta_only_static_dim: int = 0,        # fixed to 5 in this project
-        meta_feature_strengths = None,       # length = meta_only_static_dim, 0 means no injection for that metadata
-        latent_mode: str = "attn",          # "last" | "mean" | "attn" | "last_mean"
-        use_latent_proj: bool = True,       # A2: LayerNorm + projection head
-        use_err_head: bool = False,         # C1: latent->error/difficulty head
-        err_head_hidden: int = 0,           # 0 => auto
+        use_res_static: bool = False,
+        res_static_dim: int = 0,
+        use_meta_only_static: bool = False,   # exp4: attributes without the reservoir-ID embedding
+        meta_only_static_dim: int = 0,
+        latent_mode: str = "attn",          # "last" | "attn"
+        use_latent_proj: bool = True,       # LayerNorm + projection head
         # DARSD
         use_darsd: bool = False,
         lcib_k: int = 16,   # number of basis vectors
-        darsd_mode: str = "softmax_reconstruction",
         emb_dropout_p: float = 0.0,  # reservoir embedding dropout: zeroes embedding with prob p during training
         # forecasting backbone selection: the recurrent encoder-decoder, or a
         # complete Transformer encoder-decoder in its place.
@@ -61,13 +53,8 @@ class Seq2SeqLSTM(nn.Module):
             enc_in_dim = input_dim
             self.emb_dropout = None
             
-        # unified metadata conditioning (replaces old res_static_proj / res_static_film / meta_static_proj)
         self.use_res_static = use_res_static
         self.res_static_dim = int(res_static_dim)
-
-        self.res_static_mode = str(res_static_mode).lower().strip()
-        self.film_gamma_scale = float(film_gamma_scale)
-        self.film_beta_scale = float(film_beta_scale)
 
         self.use_meta_only_static = bool(use_meta_only_static)
         self.meta_only_static_dim = int(meta_only_static_dim)
@@ -96,59 +83,22 @@ class Seq2SeqLSTM(nn.Module):
             self.metadata_dim = 0
 
         if self.metadata_dim > 0:
-            if meta_feature_strengths is None:
-                meta_feature_strengths = [1.0] * self.metadata_dim
-            meta_feature_strengths = [float(v) for v in meta_feature_strengths]
-            if len(meta_feature_strengths) != self.metadata_dim:
-                raise ValueError(
-                    f"meta_feature_strengths length mismatch: "
-                    f"expected {self.metadata_dim}, got {len(meta_feature_strengths)}"
-                )
-
-            # one shared metadata buffer; train/eval can still call old setter names
+            # one shared attribute buffer; train/eval can still call old setter names
             self.register_buffer(
                 "metadata_static",
                 torch.zeros(num_reservoirs, self.metadata_dim),
                 persistent=False,
             )
-            self.register_buffer(
-                "meta_feature_strengths",
-                torch.tensor(meta_feature_strengths, dtype=torch.float32),
-                persistent=False,
-            )
 
-            # backward-compatible aliases for shape/debug only; do NOT use these for runtime indexing
-            self.res_static = self.metadata_static if self.use_res_static else None
-            self.meta_static = self.metadata_static if self.use_meta_only_static else None
-
-            # metadata modules will be constructed LATER,
-            # after core backbone modules are created, to avoid changing backbone init.
-            self.meta_to_emb = None
-            self.meta_to_film = None
+            # the attribute branches are constructed LATER, after the backbone modules,
+            # so that enabling them does not change the backbone's random initialisation.
             self.meta_to_hidden = None
             self.meta_hidden_gate = None
-
-            self.res_static_gate = None
-            self.res_static_proj = None
-            self.res_static_film = None
-            self.meta_static_proj = None
         else:
             self.metadata_static = None
-            self.meta_feature_strengths = None
 
-            self.res_static = None
-            self.meta_static = None
-
-            self.meta_to_emb = None
-            self.meta_to_film = None
             self.meta_to_hidden = None
             self.meta_hidden_gate = None
-
-            self.res_static_gate = None
-
-            self.res_static_proj = None
-            self.res_static_film = None
-            self.meta_static_proj = None
 
         # input encoder
         self.input_encoder = nn.Sequential(
@@ -171,13 +121,7 @@ class Seq2SeqLSTM(nn.Module):
                 batch_first=True,
                 dropout=dropout if num_layers > 1 else 0.0,
             )
-            self.decoder = nn.LSTM(
-                input_size=hidden_dim,
-                hidden_size=hidden_dim,
-                num_layers=num_layers,
-                batch_first=True,
-                dropout=dropout if num_layers > 1 else 0.0,
-            )
+            self.decoder = None
             self.pos_src = None
         else:
             # Full Transformer forecasting backbone. The encoder models the
@@ -211,13 +155,18 @@ class Seq2SeqLSTM(nn.Module):
             self.pos_src = nn.Embedding(self.tin, hidden_dim)
             self.pos_tgt = nn.Embedding(self.pred_len, hidden_dim)
 
-        # output head
+        # Forecast head. Every lead day is produced in one pass: the recurrent backbone
+        # maps the conditioned state straight to all of them, and the Transformer backbone
+        # applies the same head to each of its lead-day decoder outputs.
         self.fc1 = nn.Linear(hidden_dim, hidden_dim)
         self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(hidden_dim, output_dim)
         self.output_dim = output_dim
-        self.use_direct_head = bool(use_direct_head)
-        self.fc2_direct = nn.Linear(hidden_dim, output_dim * pred_len)
+        if self.backbone == "transformer_seq2seq":
+            self.fc2 = nn.Linear(hidden_dim, output_dim)
+            self.fc2_direct = None
+        else:
+            self.fc2 = None
+            self.fc2_direct = nn.Linear(hidden_dim, output_dim * pred_len)
         self.inp_dropout = nn.Dropout(dropout)
         self.mlp_dropout = nn.Dropout(dropout)
 
@@ -246,13 +195,9 @@ class Seq2SeqLSTM(nn.Module):
             return seq
 
         if self.metadata_dim > 0:
-            # v16+: one unified metadata pathway for both:
-            # - exp4 metadata + pure_lstm
-            # - exp2 / exp3 full model
-            #
-            # Metadata is converted into a latent-state correction instead of being injected
-            # into reservoir embedding / encoder FiLM. This keeps domain adaptation focused on
-            # dynamic latent, while allowing metadata to condition the final forecast state.
+            # One attribute pathway, shared by the attribute-only variant and the full model:
+            # each standardised attribute is mapped to an H-dimensional vector by its own
+            # branch, and their sum conditions the state that reaches the forecast head.
 
             meta_hidden_branch = max(16, hidden_dim // 4)
 
@@ -266,17 +211,12 @@ class Seq2SeqLSTM(nn.Module):
             ])
             self.meta_hidden_gate = nn.Parameter(torch.tensor(0.0))
 
-            # keep legacy attributes as explicit no-op placeholders for readability / backward inspection
-            self.meta_to_emb = None
-            self.meta_to_film = None
-            self.res_static_gate = None
-
-        # Latent config (A1/A2)
-        if latent_mode not in ("last", "mean", "attn", "last_mean"):
+        # dynamic-state readout
+        if latent_mode not in ("last", "attn"):
             raise ValueError(f"[Seq2SeqLSTM] Unsupported latent_mode={latent_mode}")
         self.latent_mode = latent_mode
 
-        # A1: attention pooling module (only used when latent_mode=="attn")
+        # attention pooling module (only used when latent_mode=="attn")
         attn_hidden = max(16, hidden_dim // 2)
         self.latent_attn = nn.Sequential(
             nn.Linear(hidden_dim, attn_hidden),
@@ -284,7 +224,7 @@ class Seq2SeqLSTM(nn.Module):
             nn.Linear(attn_hidden, 1),
         )
 
-        # A2: LayerNorm + projection head
+        # LayerNorm + projection head
         self.use_latent_proj = use_latent_proj
         if use_latent_proj:
             self.latent_ln = nn.LayerNorm(hidden_dim)
@@ -300,13 +240,6 @@ class Seq2SeqLSTM(nn.Module):
         # DARSD: Adv-LCIB
         self.use_darsd = bool(use_darsd)
         self.lcib_k = int(lcib_k)
-        self.darsd_mode = str(darsd_mode).lower().strip()
-        valid_darsd_modes = {"softmax_reconstruction", "orthogonal_projection"}
-        if self.darsd_mode not in valid_darsd_modes:
-            raise ValueError(
-                f"Unsupported darsd_mode={darsd_mode!r}; "
-                f"choose one of {sorted(valid_darsd_modes)}."
-            )
         if self.use_darsd:
             if self.lcib_k <= 1 or self.lcib_k > hidden_dim:
                 raise ValueError(f"use_darsd=True but lcib_k invalid: {self.lcib_k} (hidden_dim={hidden_dim})")
@@ -326,19 +259,6 @@ class Seq2SeqLSTM(nn.Module):
             self.lcib_tau = 1.0
             self._lcib_last_w = None
             self._lcib_last_coeffs = None
-
-        # Latent -> error/difficulty head (C1)
-        self.use_err_head = use_err_head
-        if use_err_head:
-            eh = err_head_hidden if err_head_hidden and err_head_hidden > 0 else max(32, hidden_dim // 2)
-            self.err_head = nn.Sequential(
-                nn.LayerNorm(hidden_dim),
-                nn.Linear(hidden_dim, eh),
-                nn.ReLU(),
-                nn.Linear(eh, 1),
-            )
-        else:
-            self.err_head = None
 
     def set_res_static(self, res_static: torch.Tensor):
         """
@@ -389,18 +309,11 @@ class Seq2SeqLSTM(nn.Module):
                 f"_metadata_branch_sum metadata_dim mismatch: got {int(meta.size(1))}, expected {int(self.metadata_dim)}"
             )
 
-        strengths = self.meta_feature_strengths.to(device=meta.device, dtype=meta.dtype)
         out = None
         for i, branch in enumerate(branches):
-            contrib = branch(meta[:, i:i+1]) * strengths[i]
+            contrib = branch(meta[:, i:i+1])
             out = contrib if out is None else (out + contrib)
         return out
-
-    def _metadata_to_emb(self, meta: torch.Tensor):
-        return self._metadata_branch_sum(meta, self.meta_to_emb)
-
-    def _metadata_to_film(self, meta: torch.Tensor):
-        return self._metadata_branch_sum(meta, self.meta_to_film)
 
     def _metadata_to_hidden(self, meta: torch.Tensor):
         return self._metadata_branch_sum(meta, self.meta_to_hidden)
@@ -452,10 +365,6 @@ class Seq2SeqLSTM(nn.Module):
         """
         if self.latent_mode == "last":
             h_latent = encoder_outputs[:, -1, :]
-        elif self.latent_mode == "mean":
-            h_latent = encoder_outputs.mean(dim=1)
-        elif self.latent_mode == "last_mean":
-            h_latent = 0.5 * (encoder_outputs[:, -1, :] + encoder_outputs.mean(dim=1))
         else:  # "attn"
             scores = self.latent_attn(encoder_outputs).squeeze(-1)  # (B, T)
             w = torch.softmax(scores, dim=1).unsqueeze(-1)          # (B, T, 1)
@@ -470,27 +379,22 @@ class Seq2SeqLSTM(nn.Module):
         return h
 
     def _lcib_decompose(self, h: torch.Tensor):
-        """Return DARSD shared state, residual state, and coordinates.
+        """Decompose the dynamic state into a shared and a site-specific component.
 
-        ``softmax_reconstruction`` preserves the historical checkpoint
-        behaviour. ``orthogonal_projection`` defines the shared component as
-        the exact projection onto span(B), yielding an additive orthogonal
-        shared/residual decomposition.
+        The basis weights are a softmax over the inner products between the dynamic
+        state and the shared basis; the shared component is the weighted combination
+        of basis vectors they select, and the site-specific component is what that
+        reconstruction leaves behind.
         """
         if (not self.use_darsd) or (self.lcib_B is None):
             raise RuntimeError("_lcib_decompose requires use_darsd=True.")
 
         Bmat = self.lcib_B  # (H, K)
-        if self.darsd_mode == "softmax_reconstruction":
-            coordinates = torch.softmax(
-                (h @ Bmat) / max(self.lcib_tau, 1e-6),
-                dim=-1,
-            )
-            h_shared = coordinates @ Bmat.T
-        else:
-            basis_q, _ = torch.linalg.qr(Bmat, mode="reduced")
-            coordinates = h @ basis_q
-            h_shared = coordinates @ basis_q.T
+        coordinates = torch.softmax(
+            (h @ Bmat) / max(self.lcib_tau, 1e-6),
+            dim=-1,
+        )
+        h_shared = coordinates @ Bmat.T
 
         h_residual = h - h_shared
         return h_shared, h_residual, coordinates
@@ -503,10 +407,7 @@ class Seq2SeqLSTM(nn.Module):
         g = torch.sigmoid(self.lcib_gate)  # scalar
         h_mix = (1.0 - g) * h + g * h_shared
 
-        # Probability weights exist only in the historical softmax mode.
-        self._lcib_last_w = (
-            coordinates if self.darsd_mode == "softmax_reconstruction" else None
-        )
+        self._lcib_last_w = coordinates
         self._lcib_last_coeffs = coordinates
         return h_mix
 
@@ -524,9 +425,6 @@ class Seq2SeqLSTM(nn.Module):
         I = torch.eye(K, device=Bmat.device, dtype=Bmat.dtype)
         BtB = Bmat.T @ Bmat
         orth_loss = (BtB - I).pow(2).mean()
-
-        if self.darsd_mode == "orthogonal_projection":
-            return orth_loss
 
         if self._lcib_last_w is None:
             return orth_loss
@@ -598,21 +496,17 @@ class Seq2SeqLSTM(nn.Module):
         x = self.input_encoder(x)
         x = self.inp_dropout(x)
 
-        # v16+: no metadata injection at encoder-input stage.
-        # Metadata is injected later on latent / decoder state so that:
-        # - exp2: DARSD acts on dynamic latent first
-        # - exp3: MMD stays on pre-metadata latent
-        # - exp4 shares the same hidden-state conditioning idea
+        # Reservoir attributes are not injected here: they condition the state after the
+        # decomposition, so the RSSD layer and the alignment losses both act on a purely
+        # dynamic state.
         if self.backbone == "lstm":
-            encoder_outputs, (h_n, c_n) = self.encoder(x)
+            encoder_outputs, _state = self.encoder(x)
         else:
             # transformer backbone: add learnable positional encoding, then self-attention.
-            # No recurrent state -> downstream metadata/decoder paths handle h_n/c_n=None.
             T = x.size(1)
             x = x + self.pos_src.weight[:T].unsqueeze(0)   # (1, T, H) broadcast over batch
             encoder_outputs = self.encoder(x)              # (B, T, H)
-            h_n, c_n = None, None
-        return encoder_outputs, h_n, c_n
+        return encoder_outputs
 
     def encode_latent(
         self,
@@ -620,10 +514,9 @@ class Seq2SeqLSTM(nn.Module):
         reservoir_ids: torch.Tensor = None,
         use_domain_cond: bool = True,
         apply_darsd: bool = None,
-        return_state: bool = False,
         return_sequence: bool = False,
     ):
-        encoder_outputs, h_n, c_n = self._build_encoded_sequence(
+        encoder_outputs = self._build_encoded_sequence(
             graph_list,
             reservoir_ids=reservoir_ids,
             use_domain_cond=use_domain_cond,
@@ -653,14 +546,6 @@ class Seq2SeqLSTM(nn.Module):
             # - exp4: same hidden-state conditioning is reused without reservoir embeddings
             h_latent = h_latent + gate * meta_h
 
-            if h_n is not None:
-                h_n = h_n.clone()
-                h_n[-1] = h_n[-1] + gate * meta_h
-
-        if return_state and return_sequence:
-            return h_latent, h_n, c_n, encoder_outputs
-        if return_state:
-            return h_latent, h_n, c_n
         if return_sequence:
             return h_latent, encoder_outputs
         return h_latent
@@ -669,21 +554,15 @@ class Seq2SeqLSTM(nn.Module):
         self,
         graph_list,
         return_latent: bool = False,
-        return_err: bool = False,
         reservoir_ids: torch.Tensor = None,
     ):
-        h_latent, h_n, c_n, encoder_outputs = self.encode_latent(
+        h_latent, encoder_outputs = self.encode_latent(
             graph_list,
             reservoir_ids=reservoir_ids,
             use_domain_cond=True,
             apply_darsd=bool(self.use_darsd),
-            return_state=True,
             return_sequence=True,
         )
-
-        err_pred = None
-        if self.err_head is not None:
-            err_pred = self.err_head(h_latent).squeeze(-1)              # (B,)
 
         # ---- full Transformer encoder--decoder forecasting backbone ----
         if self.backbone == "transformer_seq2seq":
@@ -705,70 +584,16 @@ class Seq2SeqLSTM(nn.Module):
             h = self.mlp_dropout(h)
             y_hat = self.fc2(h)
 
-            if return_latent and return_err:
-                return y_hat, h_latent, err_pred
             if return_latent:
                 return y_hat, h_latent
-            if return_err:
-                return y_hat, err_pred
             return y_hat
 
-        # ---- B2: direct multi-horizon head (no autoregressive rollout) ----
-        if getattr(self, "use_direct_head", False):
-            h = self.relu(self.fc1(h_latent))                           # (B, H)
-            h = self.mlp_dropout(h)
-            out = self.fc2_direct(h)                                    # (B, pred_len*output_dim)
-            y_hat = out.view(h.size(0), self.pred_len, self.output_dim) # (B, pred_len, output_dim)
+        # ---- recurrent backbone: every lead day from the conditioned state in one pass ----
+        h = self.relu(self.fc1(h_latent))                            # (B, H)
+        h = self.mlp_dropout(h)
+        out = self.fc2_direct(h)                                     # (B, pred_len*output_dim)
+        y_hat = out.view(h.size(0), self.pred_len, self.output_dim)  # (B, pred_len, output_dim)
 
-            if return_latent and return_err:
-                return y_hat, h_latent, err_pred
-            if return_latent:
-                return y_hat, h_latent
-            if return_err:
-                return y_hat, err_pred
-            return y_hat
-        
-        # decoder uses latent as initial input token
-        decoder_input = h_latent.unsqueeze(1)                           # (B, 1, H)
-        decoder_hidden, decoder_cell = h_n, c_n
-
-        outputs = []
-        for t in range(self.pred_len):
-            decoder_output, (decoder_hidden, decoder_cell) = self.decoder(
-                decoder_input, (decoder_hidden, decoder_cell)
-            )                                                           # (B, 1, H)
-            h = self.relu(self.fc1(decoder_output))
-            h = self.mlp_dropout(h)
-            out = self.fc2(h)
-            outputs.append(out)
-            decoder_input = decoder_output
-            
-            # ---- (scheme2) stabilize long-horizon rollout ----
-            t_fac = float(t) / float(max(self.pred_len - 1, 1))
-
-            anchor_alpha = float(getattr(self, "decoder_anchor_alpha", 0.0))
-            if anchor_alpha > 0.0:
-                # convex pull-back: decoder_input <- (1-a)*decoder_output + a*h_latent
-                a = float(t_fac) * float(anchor_alpha)
-                if a < 0.0:
-                    a = 0.0
-                elif a > 1.0:
-                    a = 1.0
-                decoder_input = (1.0 - a) * decoder_output + a * h_latent.unsqueeze(1)
-
-            noise_std = float(getattr(self, "decoder_noise_std", 0.0))
-            if self.training and (noise_std > 0.0):
-                decoder_input = decoder_input + (t_fac * noise_std) * torch.randn_like(decoder_input)            
-
-        y_hat = torch.cat(outputs, dim=1)                                # (B, pred_len, output_dim)
-
-        if return_latent and return_err:
-            return y_hat, h_latent, err_pred
         if return_latent:
             return y_hat, h_latent
-        if return_err:
-            return y_hat, err_pred
         return y_hat
-
-
-# Autoregressive Decoding: Error propagation ->  Prediction for day 2 depends on day 1 prediction

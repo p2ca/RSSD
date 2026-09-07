@@ -1,13 +1,11 @@
 """Source training: one epoch of the objective, and in-training evaluation.
 
-The prediction clamp, horizon weighting, gradient clipping and the
-variance-risk-extrapolation penalty are keyword arguments.
-
-``run_epoch`` carries the complete training objective: the Huber prediction loss with
-optional per-reservoir variance normalisation and horizon weighting, the RSSD regulariser,
-the error head, and whichever whole-latent alignment term the variant uses (MMD, CORAL or
-domain-adversarial). ``evaluate_model`` is the in-training source evaluation; the
-target-side evaluation with adaptation lives in :mod:`rssd.engine.evaluator`.
+``run_epoch`` carries the complete training objective: the smooth-L1 prediction loss,
+averaged equally over the batch and the seven lead days, the shared-basis regulariser, and
+whichever whole-latent alignment term the variant uses (MMD, CORAL or domain-adversarial).
+The prediction clamp and gradient clipping are keyword arguments. ``evaluate_model`` is the
+in-training source evaluation; the target-side evaluation with adaptation lives in
+:mod:`rssd.engine.evaluator`.
 """
 
 from __future__ import annotations
@@ -16,7 +14,6 @@ import copy
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from sklearn.metrics import r2_score
 from tqdm import tqdm
 
@@ -65,11 +62,9 @@ def run_epoch(
     inv_pack_y,
     y_transform,
     y_scale_t,
-    LAMBDA_NEG,
     optimizer=None,
     train=True,
     device="cpu",
-    err_weight: float = 0.0,
     epoch: int = 0,
     log_every: int = 0,
     target_loader=None,
@@ -82,17 +77,10 @@ def run_epoch(
     mmd_normalize_latent: bool = True,
     mmd_max_samples_per_domain: int = 0,
     DARSD_WEIGHT: float = 2e-4,
-    res_var_norm_t=None,
-    use_per_res_norm_loss: bool = False,
     clamp_pred_to_fr: bool = True,
-    use_horizon_weights: bool = False,
-    horizon_weights=None,
     grad_clip_norm: float = 0.0,
-    use_vrex: bool = False,
-    vrex_weight: float = 0.1,
 ):
     model.train() if train else model.eval()
-    has_err_head = bool(getattr(model, "use_err_head", False))
     align_method = str(align_method or "none").lower()
     use_align_train = bool(
         train and (align_method in ("mmd", "coral", "dann"))
@@ -164,29 +152,16 @@ def run_epoch(
 
                 # forward
                 h_latent = None
-                err_pred = None
+                need_latent = bool(use_align_train and (tgt_graphs_mmd is not None))
 
-                need_latent = bool(
-                    has_err_head
-                    or (use_align_train and (tgt_graphs_mmd is not None))
-                )
-
-                if has_err_head:
-                    y_hat, h_latent, err_pred = model(
+                if need_latent:
+                    y_hat, h_latent = model(
                         graphs,
                         return_latent=True,
-                        return_err=True,
                         reservoir_ids=reservoir_ids,
                     )
                 else:
-                    if need_latent:
-                        y_hat, h_latent = model(
-                            graphs,
-                            return_latent=True,
-                            reservoir_ids=reservoir_ids,
-                        )
-                    else:
-                        y_hat = model(graphs, reservoir_ids=reservoir_ids)
+                    y_hat = model(graphs, reservoir_ids=reservoir_ids)
 
                 # squeeze to 2D (nodes, pred_len)
                 y_hat_raw = _squeeze_pred_tensor(y_hat)
@@ -253,34 +228,9 @@ def run_epoch(
                 if per_elem.dim() != 2:
                     raise RuntimeError(f"Expected per_elem 2D (nodes,pred_len), got {tuple(per_elem.shape)}")
 
-                if use_horizon_weights:
-                    w = torch.tensor(horizon_weights, device=per_elem.device, dtype=per_elem.dtype)[None, :]
-                    if use_per_res_norm_loss and res_var_norm_t is not None:
-                        per_res_loss = (per_elem * w).mean(dim=1)  # (batch*n_nodes,)
-                        _nb = res_var_norm_t.shape[0]; _nc = per_res_loss.shape[0]
-                        _rv = res_var_norm_t.repeat(max(1, _nc // _nb)).to(per_res_loss.device).clamp(min=1e-6)
-                        pred_loss = (per_res_loss / _rv).mean()
-                    else:
-                        pred_loss = (per_elem * w).mean()
-                else:
-                    if use_per_res_norm_loss and res_var_norm_t is not None:
-                        per_res_loss = per_elem.mean(dim=1)
-                        _nb = res_var_norm_t.shape[0]; _nc = per_res_loss.shape[0]
-                        _rv = res_var_norm_t.repeat(max(1, _nc // _nb)).to(per_res_loss.device).clamp(min=1e-6)
-                        pred_loss = (per_res_loss / _rv).mean()
-                    else:
-                        pred_loss = per_elem.mean()
+                # every lead day contributes equally
+                pred_loss = per_elem.mean()
 
-                neg_pen = torch.relu(-y_hat_phys).mean()
-                pred_loss = pred_loss + (LAMBDA_NEG * neg_pen)
-                # -------- V-REx loss (optional; training only) --------
-                if bool(use_vrex) and train:
-                    _vrex_weight = float(vrex_weight)
-                    _n_res = int(_baseN)  # base number of source reservoirs
-                    _bwin = per_elem.size(0) // _n_res
-                    _per_res = per_elem.reshape(_bwin, _n_res, -1).mean(dim=2).mean(dim=0)  # (n_res,)
-                    _vrex_loss = _per_res.var()
-                    pred_loss = pred_loss + _vrex_weight * _vrex_loss
                 # -------- domain-alignment loss (optional; training only, source->target) --------
                 # mmd (exp3) / coral (exp8) / dann (exp9) share the same domain-agnostic,
                 # window-mean latent extraction; only the loss formula differs.
@@ -294,14 +244,12 @@ def run_epoch(
                         reservoir_ids=None,
                         use_domain_cond=False,
                         apply_darsd=False,
-                        return_state=False,
                     )
                     h_target_mmd = model.encode_latent(
                         tgt_graphs_mmd,
                         reservoir_ids=None,
                         use_domain_cond=False,
                         apply_darsd=False,
-                        return_state=False,
                     )
 
                     h_source_mmd = _window_mean_latent(h_source_mmd, _Bwin, _base_nodes)
@@ -331,36 +279,11 @@ def run_epoch(
                             normalize_latent=bool(mmd_normalize_latent),
                         )
 
-                # -------- err-head loss (optional; training only) --------
-                err_loss = None
-                if has_err_head and train and (err_weight > 0):
-                    if err_pred is None:
-                        raise RuntimeError("has_err_head=True but err_pred is None. Check model forward return.")
-
-                    # err_target is the prediction error in the same space as the main objective
-                    # y_hat_norm / tgt_norm: (nodes, pred_len) in normalized-physical space
-                    err_target_raw = (y_hat_norm.detach() - tgt_norm.detach()).abs().mean(dim=1)  # (nodes,)
-                    err_target = torch.log1p(err_target_raw)  # stabilize, keep non-negative
-
-                    # ensure err_pred is non-negative
-                    err_pred_pos = F.softplus(err_pred.view(-1))
-
-                    # shape guard
-                    if err_pred_pos.numel() != err_target.numel():
-                        raise RuntimeError(
-                            f"err_pred vs target mismatch: err_pred={tuple(err_pred.shape)} "
-                            f"-> {tuple(err_pred_pos.shape)} vs err_target={tuple(err_target.shape)}"
-                        )
-
-                    err_loss = F.smooth_l1_loss(err_pred_pos, err_target)
-
                 # -------- total loss --------
                 loss = pred_loss
-                # DARSD regularizer (training only) 
+                # shared-basis regularizer (training only)
                 if train and getattr(model, "use_darsd", False):
                     loss = loss + DARSD_WEIGHT * model.darsd_regularizer(entropy_weight=0.02)
-                if err_loss is not None:
-                    loss = loss + err_weight * err_loss
                 if align_loss is not None:
                     if align_method == "dann":
                         # GRL already scales the encoder gradient by align_weight (lambda);

@@ -10,22 +10,22 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from rssd.models.checkpoint import SUPPORTED_BACKBONES                  # noqa: E402
 from rssd.models.lstm import Seq2SeqLSTM                                # noqa: E402
 
 
 def build(**overrides):
-    kwargs = dict(input_dim=4, hidden_dim=8, output_dim=1, num_layers=1, pred_len=7,
-                  use_direct_head=True)
+    kwargs = dict(input_dim=4, hidden_dim=8, output_dim=1, num_layers=1, pred_len=7)
     kwargs.update(overrides)
     return Seq2SeqLSTM(**kwargs)
 
 
 class BackboneTests(unittest.TestCase):
-    def test_recurrent_backbone_builds_an_encoder_and_a_decoder(self):
+    def test_recurrent_backbone_forecasts_every_lead_day_in_one_pass(self):
         model = build()
         self.assertIsInstance(model.encoder, torch.nn.LSTM)
-        self.assertIsInstance(model.decoder, torch.nn.LSTM)
+        self.assertIsNone(model.decoder)
+        # one head, seven lead days
+        self.assertEqual(tuple(model.fc2_direct.weight.shape), (7, 8))
 
     def test_transformer_backbone_builds_a_full_encoder_decoder(self):
         model = build(backbone="transformer_seq2seq", n_heads=2, tin=30)
@@ -33,11 +33,6 @@ class BackboneTests(unittest.TestCase):
         self.assertIsInstance(model.decoder, torch.nn.TransformerDecoder)
         # one positional query per lead day, so every horizon attends to the full history
         self.assertEqual(tuple(model.pos_tgt.weight.shape), (7, 8))
-
-    def test_encoder_only_transformer_is_not_available(self):
-        with self.assertRaises(ValueError):
-            build(backbone="transformer", n_heads=2, tin=30)
-        self.assertEqual(sorted(SUPPORTED_BACKBONES), ["lstm", "transformer_seq2seq"])
 
     def test_unknown_backbone_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -70,7 +65,7 @@ class RssdLayerTests(unittest.TestCase):
 
     def test_assignment_weights_form_a_distribution_over_the_shared_basis(self):
         torch.manual_seed(0)
-        model = build(use_darsd=True, lcib_k=3, darsd_mode="softmax_reconstruction")
+        model = build(use_darsd=True, lcib_k=3)
         _, _, assignments = model._lcib_decompose(torch.randn(5, 8))
         self.assertEqual(tuple(assignments.shape), (5, 3))
         torch.testing.assert_close(assignments.sum(dim=-1), torch.ones(5), rtol=1e-5, atol=1e-6)

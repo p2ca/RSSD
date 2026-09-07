@@ -64,13 +64,12 @@ class LadderTests(unittest.TestCase):
         cfg = cfg_for("rssd_lstm")
         self.assertTrue(cfg["model"]["use_darsd"])
         self.assertEqual(cfg["model"]["lcib_k"], 8)
-        self.assertEqual(cfg["model"]["darsd_mode"], "softmax_reconstruction")
         self.assertEqual(cfg["adaptation"]["ALIGN_METHOD"], "none")
 
     def test_transformer_variant_changes_only_the_backbone(self):
         lstm, transformer = cfg_for("rssd_lstm")["model"], cfg_for("rssd_transformer")["model"]
         self.assertEqual(transformer.get("BACKBONE"), "transformer_seq2seq")
-        for key in ("use_reservoir_emb", "use_res_static", "use_darsd", "lcib_k", "darsd_mode"):
+        for key in ("use_reservoir_emb", "use_res_static", "use_darsd", "lcib_k"):
             self.assertEqual(transformer[key], lstm[key])
 
 

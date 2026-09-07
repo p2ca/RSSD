@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -27,13 +26,13 @@ def _finetune_configure_trainable_params(model, mode="full"):
     elif mode == "emb_head":
         return [(n, p) for n, p in model.named_parameters()
                 if any(k in n for k in ("reservoir_emb", "res_static", "meta_static",
-                                         "direct_head", "err_head", "out_proj", "metadata"))]
+                                         "fc1", "fc2", "metadata"))]
     elif mode == "emb":
         return [(n, p) for n, p in model.named_parameters()
                 if any(k in n for k in ("reservoir_emb", "res_static", "meta_static"))]
     elif mode == "head":
         return [(n, p) for n, p in model.named_parameters()
-                if any(k in n for k in ("direct_head", "err_head", "out_proj"))]
+                if any(k in n for k in ("fc1", "fc2"))]
     else:
         return [(n, p) for n, p in model.named_parameters() if p.requires_grad]
 
@@ -45,16 +44,13 @@ def run_epoch(
     inv_pack_y,
     y_transform,
     y_scale_t,
-    LAMBDA_NEG,
     optimizer=None,
     train=True,
     device="cpu",
-    err_weight: float = 0.0,
     epoch: int = 0,
     log_every: int = 0,
 ):
     model.train() if train else model.eval()
-    has_err_head = bool(getattr(model, "use_err_head", False))
 
     total_loss = 0.0
     n_steps = 0
@@ -81,13 +77,7 @@ def run_epoch(
                 # -------------------
                 # forward
                 # -------------------
-                h_latent = None
-                err_pred = None
-
-                if has_err_head:
-                    y_hat, h_latent, err_pred = model(graphs, return_latent=True, return_err=True)
-                else:
-                    y_hat = model(graphs)
+                y_hat = model(graphs)
 
                 # squeeze to 2D (nodes, pred_len)
                 y_hat_raw = _squeeze_pred_tensor(y_hat)
@@ -121,39 +111,8 @@ def run_epoch(
 
                 pred_loss = criterion(y_hat_norm, tgt_norm)
 
-                neg_pen = torch.relu(-y_hat_phys).mean()
-                pred_loss = pred_loss + (LAMBDA_NEG * neg_pen)
-
-                # -------- err-head loss (optional; training only) --------
-                err_loss = None
-                if has_err_head and train and (err_weight > 0):
-                    if err_pred is None:
-                        raise RuntimeError("has_err_head=True but err_pred is None. Check model forward return.")
-
-                    # err_target is the prediction error in the same space as the main objective
-                    # y_hat_norm / tgt_norm: (nodes, pred_len) in normalized-physical space
-                    err_target_raw = (y_hat_norm.detach() - tgt_norm.detach()).abs().mean(dim=1)  # (nodes,)
-                    err_target = torch.log1p(err_target_raw)  # stabilize, keep non-negative
-
-                    # ensure err_pred is non-negative
-                    err_pred_pos = F.softplus(err_pred.view(-1))
-
-                    # shape guard
-                    if err_pred_pos.numel() != err_target.numel():
-                        raise RuntimeError(
-                            f"err_pred vs target mismatch: err_pred={tuple(err_pred.shape)} "
-                            f"-> {tuple(err_pred_pos.shape)} vs err_target={tuple(err_target.shape)}"
-                        )
-
-                    err_loss = F.smooth_l1_loss(err_pred_pos, err_target)
-
-                # -------- total loss --------
+                # the shared-basis regularizer is a source-training term only
                 loss = pred_loss
-                # DARSD regularizer (training only) 
-                if train and getattr(model, "use_darsd", False):
-                    loss = loss + 1e-4 * model.darsd_regularizer(entropy_weight=0.01)
-                if err_loss is not None:
-                    loss = loss + err_weight * err_loss
 
                 if train and optimizer is not None:
                     loss.backward()

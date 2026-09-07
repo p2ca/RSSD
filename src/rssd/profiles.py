@@ -1,10 +1,10 @@
-"""Experiment profiles: turning one training configuration into the eight variants.
+"""Experiment profiles: turning one training configuration into the model variants.
 
 A run states which variant it is
 (``MODEL_VARIANT``: the architecture family) and which experiment
 (``EXP_NAME``: the specific ablation), and these functions rewrite the configuration
-accordingly -- switching the per-reservoir embedding, static-attribute conditioning, the
-error head and the RSSD layer on or off, and selecting the alignment objective. Keeping
+accordingly -- switching the per-reservoir embedding, static-attribute conditioning and
+the RSSD layer on or off, and selecting the alignment objective. Keeping
 this as one auditable transform is what makes the ladder of variants a controlled
 comparison rather than eight hand-maintained configurations.
 """
@@ -33,9 +33,7 @@ def _apply_train_ablation_profile(cfg: dict, model_variant: str) -> dict:
     m = cfg["model"]
 
     if model_variant == "pure_lstm":
-        # history-only: keep the plain sequence-to-sequence LSTM trunk
-        m["USE_DIRECT_HEAD"] = False
-
+        # history-only trunk
         m["use_reservoir_emb"] = False
         m["res_emb_dim"] = 0
 
@@ -45,45 +43,28 @@ def _apply_train_ablation_profile(cfg: dict, model_variant: str) -> dict:
         m["latent_mode"] = "last"
         m["use_latent_proj"] = False
 
-        m["use_err_head"] = False
-        m["err_head_hidden"] = 0
-
         m["use_darsd"] = False
         m["lcib_k"] = 0
 
         m["use_meta_only_static"] = False
         m["meta_only_static_dim"] = 0
-        m.setdefault("meta_feature_names", ["storage_max", "elev_mean", "lat", "lon", "ground_elev"])
-        m.setdefault("meta_feature_strengths", [1.0, 1.0, 1.0, 1.0, 1.0])
 
     elif model_variant == "full_model":
         # full model: every reservoir-information component enabled
-        m["USE_DIRECT_HEAD"] = True
-
         m["use_reservoir_emb"] = True
         m["res_emb_dim"] = 4
 
         m["use_res_static"] = True
         m["res_static_dim"] = 6
-        m["RES_STATIC_MODE"] = "latent"
-        m["FILM_GAMMA_SCALE"] = 0.0   # legacy field, no longer used by runtime path
-        m["FILM_BETA_SCALE"] = 0.0    # legacy field, no longer used by runtime path
-        m["FILM_GAMMA_SCALE"] = 0.10
-        m["FILM_BETA_SCALE"] = 0.10
 
         m["latent_mode"] = "attn"
         m["use_latent_proj"] = True
-
-        m["use_err_head"] = True
-        m["err_head_hidden"] = 64
 
         m["use_darsd"] = True
         m["lcib_k"] = 8
 
         m["use_meta_only_static"] = False
         m["meta_only_static_dim"] = 0
-        m.setdefault("meta_feature_names", ["storage_max", "elev_mean", "lat", "lon", "ground_elev"])
-        m.setdefault("meta_feature_strengths", [1.0, 1.0, 1.0, 1.0, 1.0])
 
     return cfg
 
@@ -103,39 +84,11 @@ def _apply_train_exp_overrides(cfg: dict) -> dict:
         m["use_meta_only_static"] = True
         m["meta_only_static_dim"] = 6
 
-        if "meta_feature_names" not in m:
-            m["meta_feature_names"] = ["storage_max", "elev_mean", "lat", "lon", "ground_elev"]
-        if "meta_feature_strengths" not in m:
-            m["meta_feature_strengths"] = [1.0] * int(m["meta_only_static_dim"])
-
         if len(m["meta_feature_names"]) != int(m["meta_only_static_dim"]):
             raise ValueError(
                 f"exp4_meta_pure_lstm requires len(meta_feature_names)==meta_only_static_dim, "
                 f"got {len(m['meta_feature_names'])} vs {m['meta_only_static_dim']}"
             )
-        if len(m["meta_feature_strengths"]) != int(m["meta_only_static_dim"]):
-            raise ValueError(
-                f"exp4_meta_pure_lstm requires len(meta_feature_strengths)==meta_only_static_dim, "
-                f"got {len(m['meta_feature_strengths'])} vs {m['meta_only_static_dim']}"
-            )
-
-        tr = cfg["train"]
-        tr["MIN_DELTA"] = 1e-4
-        tr["MIN_DELTA_REL"] = 0.0
-        tr["EARLY_STOP_MIN_EPOCHS"] = max(int(tr["EARLY_STOP_MIN_EPOCHS"]), 25)
-        tr["EARLY_STOP_PATIENCE"] = max(int(tr["EARLY_STOP_PATIENCE"]), 20)
-
-    elif exp_name == "exp5_darsd_pure_lstm":
-        # pure_lstm backbone + metadata + DARSD (no reservoir embedding)
-        m["use_meta_only_static"] = True
-        m["meta_only_static_dim"] = 6
-        if "meta_feature_names" not in m:
-            m["meta_feature_names"] = ["storage_max", "elev_mean", "lat", "lon", "ground_elev"]
-        if "meta_feature_strengths" not in m:
-            m["meta_feature_strengths"] = [1.0] * 6
-        m["use_darsd"] = True
-        m["lcib_k"] = 16
-
         tr = cfg["train"]
         tr["MIN_DELTA"] = 1e-4
         tr["MIN_DELTA_REL"] = 0.0
@@ -143,20 +96,16 @@ def _apply_train_exp_overrides(cfg: dict) -> dict:
         tr["EARLY_STOP_PATIENCE"] = max(int(tr["EARLY_STOP_PATIENCE"]), 20)
 
     elif exp_name == "exp6_context_lstm":
-        # full_model backbone + reservoir embedding only; no metadata, no DARSD, no err_head
+        # full_model backbone + reservoir embedding only; no attributes, no RSSD layer
         m["use_res_static"] = False
         m["res_static_dim"] = 0
         m["use_darsd"] = False
         m["lcib_k"] = 0
-        m["use_err_head"] = False
-        m["err_head_hidden"] = 0
 
     elif exp_name == "exp7_metacontext_lstm":
-        # full_model backbone + reservoir embedding + static metadata; no DARSD, no err_head
+        # full_model backbone + reservoir embedding + attributes; no RSSD layer
         m["use_darsd"] = False
         m["lcib_k"] = 0
-        m["use_err_head"] = False
-        m["err_head_hidden"] = 0
 
     elif exp_name == "exp2t_full_model_transformer":
         # backbone sensitivity: retain the information/RSSD design while replacing
@@ -199,7 +148,7 @@ def _validate_ablation_and_adaptation(cfg: dict) -> None:
     }
     _NOALIGN_FULL = {"exp2_full_model", "exp6_context_lstm", "exp7_metacontext_lstm",
                      "exp2t_full_model_transformer"}
-    _NOALIGN_PURE = {"exp1_pure_lstm", "exp4_meta_pure_lstm", "exp5_darsd_pure_lstm"}
+    _NOALIGN_PURE = {"exp1_pure_lstm", "exp4_meta_pure_lstm"}
 
     if exp_name in _ALIGN_EXPS:
         if model_variant != "full_model":

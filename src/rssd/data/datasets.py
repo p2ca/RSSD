@@ -1,7 +1,7 @@
 """Loading the preprocessed reservoir tensors and building the training loaders.
 
-The split, the scaling and the sampling are fixed by the protocol; this module only
-loads them and assembles the loaders.
+The split and the scaling are fixed by the protocol; this module only loads them and
+assembles the loaders.
 
 A parsed dataset directory (``data/parsed/<dataset_tag>/``) holds two files:
 
@@ -24,8 +24,6 @@ import torch
 from torch.utils.data import DataLoader, Subset
 
 from rssd import paths
-from rssd.data.sampling import _apply_flat_window_thinning, _build_event_weighted_sampler
-from rssd.data.sampling import _compute_window_event_scores, _select_low_flow_focus_nodes
 from rssd.data.scalers import _extract_bounds_for_nonneg
 from rssd.utils import WindowDataset
 from rssd.utils import build_supervised_split_from_reservoir_blocks
@@ -34,7 +32,7 @@ from rssd.utils import inverse_transform_predictions
 
 __all__ = [
     "ParsedDataset", "load_parsed_dataset", "compute_train_scale_stats",
-    "build_window_scores", "build_datasets", "build_target_datasets", "build_dataloaders",
+    "build_datasets", "build_target_datasets", "build_dataloaders",
     "resolve_embargo_windows",
     "build_alignment_loader",
     "assert_target_scaler_consistency",
@@ -193,15 +191,6 @@ def compute_train_scale_stats(ds: ParsedDataset):
     return scale_arr, scale_dict, var_arr, y_train_orig
 
 
-def build_window_scores(ds: ParsedDataset, y_train_orig, train_y_scale_arr,
-                        low_flow_fraction: float = 0.60):
-    """Event scores per training window, plus the low-flow focus nodes they are scored on."""
-    focus_idx, focus_names = _select_low_flow_focus_nodes(
-        train_y_scale_arr, ds.reservoir_names_in_node_order, low_flow_fraction=low_flow_fraction)
-    scores = _compute_window_event_scores(y_train_orig, train_y_scale_arr, focus_idx)
-    return scores, focus_idx, focus_names
-
-
 def resolve_embargo_windows(ds: ParsedDataset) -> int:
     """Windows dropped at the head of the validation and test blocks.
 
@@ -257,64 +246,19 @@ def build_target_datasets(ds: ParsedDataset):
     return support, val, test
 
 
-def _thin_and_drop(train_dataset, window_scores, *, use_event_balanced_sampling: bool,
-                   flat_window_quantile: float, flat_window_keep_frac: float,
-                   train_window_drop_frac: float, train_window_drop_seed: int, seed: int):
-    info = {}
-    if use_event_balanced_sampling:
-        train_dataset, flat_thin_info = _apply_flat_window_thinning(
-            train_dataset, window_scores, flat_quantile=flat_window_quantile,
-            keep_frac=flat_window_keep_frac, seed=seed)
-        info["window_thinning"] = flat_thin_info
-
-    drop_frac = max(0.0, min(float(train_window_drop_frac), 0.95))
-    if drop_frac > 0.0:
-        n = len(train_dataset)
-        n_keep = max(1, int(round(n * (1.0 - drop_frac))))
-        g_mask = torch.Generator().manual_seed(int(train_window_drop_seed))
-        keep_idx = torch.randperm(n, generator=g_mask).tolist()[:n_keep]
-        train_dataset = Subset(train_dataset, keep_idx)
-        info["lowdata"] = {"drop_frac": drop_frac, "keep": n_keep, "of": n}
-
-    return train_dataset, info
-
-
-def build_dataloaders(train_dataset, val_dataset, test_dataset, window_scores, *,
+def build_dataloaders(train_dataset, val_dataset, test_dataset, *,
                       batch_size: int = 128, seed: int = 42,
-                      use_event_balanced_sampling: bool = False,
-                      event_score_quantile: float = 0.80, event_upweight: float = 1.0,
-                      flat_window_quantile: float = 0.0, flat_window_keep_frac: float = 1.0,
-                      train_window_drop_frac: float = 0.0, train_window_drop_seed: int = 0,
                       num_workers: int = 0, pin_memory=None, persistent_workers=False,
                       prefetch_factor=None, multiprocessing_context=None):
     """Loaders for training, in-training diagnostics, validation and test."""
-    train_dataset, info = _thin_and_drop(
-        train_dataset, window_scores,
-        use_event_balanced_sampling=use_event_balanced_sampling,
-        flat_window_quantile=flat_window_quantile,
-        flat_window_keep_frac=flat_window_keep_frac,
-        train_window_drop_frac=train_window_drop_frac,
-        train_window_drop_seed=train_window_drop_seed, seed=seed)
-
-    train_sampler = None
-    if use_event_balanced_sampling:
-        train_sampler, sampler_info = _build_event_weighted_sampler(
-            train_dataset, window_scores, event_quantile=event_score_quantile,
-            upweight=event_upweight, seed=seed)
-        info["window_sampler"] = sampler_info
-
     loader_kwargs = dict(
         batch_size=batch_size, collate_fn=_collate, num_workers=num_workers,
         pin_memory=pin_memory, persistent_workers=persistent_workers,
         prefetch_factor=prefetch_factor, multiprocessing_context=multiprocessing_context,
     )
-    if train_sampler is None:
-        train_loader = DataLoader(train_dataset, shuffle=True,
-                                  generator=torch.Generator().manual_seed(seed + 123),
-                                  **loader_kwargs)
-    else:
-        train_loader = DataLoader(train_dataset, shuffle=False, sampler=train_sampler,
-                                  **loader_kwargs)
+    train_loader = DataLoader(train_dataset, shuffle=True,
+                              generator=torch.Generator().manual_seed(seed + 123),
+                              **loader_kwargs)
 
     # Diagnostics run on the post-split training set so nothing leaks from validation.
     train_loader_diag = DataLoader(train_dataset, shuffle=False, **loader_kwargs)
@@ -324,7 +268,7 @@ def build_dataloaders(train_dataset, val_dataset, test_dataset, window_scores, *
     return {
         "train": train_loader, "train_diag": train_loader_diag,
         "val": val_loader, "test": test_loader,
-        "train_dataset": train_dataset, "info": info,
+        "train_dataset": train_dataset,
     }
 
 

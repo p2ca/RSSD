@@ -54,24 +54,16 @@ src/rssd/
 ├── config.py        transfer scenarios, model variants, run configuration, manifest
 ├── profiles.py      the experiment profiles behind the variant ladder
 ├── metrics.py       correlation helpers, per-reservoir and per-lead-day NSE
-├── data/            parsed tensors, scalers, event sampling, static attributes
+├── data/            parsed tensors, scalers, static attributes
 ├── models/          Seq2SeqLSTM with the RSSD layer, checkpoint-locked model building
-├── objectives/      alignment losses (MMD / CORAL / DANN) and loss-weight schedules
+├── objectives/      alignment losses (MMD / CORAL / DANN) and the alignment-weight schedule
 ├── engine/          source training, target-history fine-tuning and evaluation
 ├── io/              checkpoint bundles and structured run outputs
 └── cli/             command-line entry points
 
 configs/experiments.yaml   which variants were trained on which sources, and the scenarios
 data/reservoirs_*.txt      the frozen reservoir pools, in node order
-examples/quickstart.py     a tour of the model and the variant ladder, on synthetic tensors
-scripts/                   data-preparation helpers
 tests/                     runs anywhere; data-dependent tests skip themselves
-```
-
-A five-minute tour that needs no data:
-
-```bash
-python examples/quickstart.py
 ```
 
 ## Forecasting task and protocol

@@ -1,1 +1,1 @@
-"""Data loading, scaling and sampling."""
+"""Data loading and scaling."""

@@ -123,14 +123,14 @@ class AlignmentTests(unittest.TestCase):
 
 
 class ScheduleTests(unittest.TestCase):
-    def test_weights_stay_zero_during_warmup_then_reach_the_maximum(self):
-        for fn, w_max in ((schedules.get_mmd_weight, 0.05), (schedules.get_err_weight, 0.2)):
-            self.assertEqual(fn(0, w_max=w_max, warmup=5, ramp=10), 0.0)
-            self.assertEqual(fn(4, w_max=w_max, warmup=5, ramp=10), 0.0)
-            mid = fn(10, w_max=w_max, warmup=5, ramp=10)
-            self.assertGreater(mid, 0.0)
-            self.assertLess(mid, w_max)
-            self.assertAlmostEqual(fn(100, w_max=w_max, warmup=5, ramp=10), w_max)
+    def test_the_alignment_weight_stays_zero_during_warmup_then_reaches_the_maximum(self):
+        fn, w_max = schedules.get_mmd_weight, 0.05
+        self.assertEqual(fn(0, w_max=w_max, warmup=5, ramp=10), 0.0)
+        self.assertEqual(fn(4, w_max=w_max, warmup=5, ramp=10), 0.0)
+        mid = fn(10, w_max=w_max, warmup=5, ramp=10)
+        self.assertGreater(mid, 0.0)
+        self.assertLess(mid, w_max)
+        self.assertAlmostEqual(fn(100, w_max=w_max, warmup=5, ramp=10), w_max)
 
 
 class SummaryTests(unittest.TestCase):

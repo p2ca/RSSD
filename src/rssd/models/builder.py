@@ -42,8 +42,7 @@ CORE_KEYS = {
     "lstm": [
         "input_encoder.0.weight",
         "encoder.weight_ih_l0", "encoder.weight_hh_l0",
-        "decoder.weight_ih_l0", "decoder.weight_hh_l0",
-        "fc1.weight", "fc2.weight",
+        "fc1.weight", "fc2_direct.weight",
     ],
 }
 
@@ -57,13 +56,11 @@ def resolve_device(device=None):
 
 
 def build_model(*, input_dim, hidden_dim, num_layers, pred_len, dropout, latent_mode,
-                use_latent_proj, use_direct_head=True, num_reservoirs=0,
+                use_latent_proj, num_reservoirs=0,
                 use_reservoir_emb=False, reservoir_emb_dim=0, emb_dropout_p=0.0,
-                use_res_static=False, res_static_dim=0, res_static_mode="add",
-                film_gamma_scale=0.10, film_beta_scale=0.10,
-                use_meta_only_static=False, meta_only_static_dim=0, meta_feature_strengths=None,
-                use_err_head=False, err_head_hidden=0,
-                use_darsd=False, lcib_k=0, darsd_mode="softmax_reconstruction",
+                use_res_static=False, res_static_dim=0,
+                use_meta_only_static=False, meta_only_static_dim=0,
+                use_darsd=False, lcib_k=0,
                 backbone="lstm", n_heads=8, tf_layers=2, tf_ff_mult=4, tin=30,
                 device=None):
     """Instantiate ``Seq2SeqLSTM`` with the project's argument contract."""
@@ -74,7 +71,6 @@ def build_model(*, input_dim, hidden_dim, num_layers, pred_len, dropout, latent_
         output_dim=1,
         num_layers=int(num_layers),
         pred_len=int(pred_len),
-        use_direct_head=bool(use_direct_head),
         dropout=float(dropout),
 
         use_reservoir_emb=bool(use_reservoir_emb),
@@ -84,23 +80,16 @@ def build_model(*, input_dim, hidden_dim, num_layers, pred_len, dropout, latent_
 
         use_res_static=bool(use_res_static),
         res_static_dim=int(res_static_dim),
-        res_static_mode=str(res_static_mode),
-        film_gamma_scale=float(film_gamma_scale),
-        film_beta_scale=float(film_beta_scale),
 
         use_meta_only_static=bool(use_meta_only_static),
         meta_only_static_dim=int(meta_only_static_dim),
-        meta_feature_strengths=meta_feature_strengths,
 
         latent_mode=str(latent_mode),
         use_latent_proj=bool(use_latent_proj),
 
-        use_err_head=bool(use_err_head),
-        err_head_hidden=int(err_head_hidden),
 
         use_darsd=bool(use_darsd),
         lcib_k=int(lcib_k),
-        darsd_mode=str(darsd_mode),
 
         backbone=str(backbone),
         n_heads=int(n_heads),
@@ -116,16 +105,13 @@ def build_model_from_checkpoint_config(cfg, *, input_dim, pred_len, num_nodes, d
     return build_model(
         input_dim=input_dim, hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
         pred_len=pred_len, dropout=cfg.dropout, latent_mode=cfg.latent_mode,
-        use_latent_proj=cfg.use_latent_proj, use_direct_head=cfg.use_direct_head,
+        use_latent_proj=cfg.use_latent_proj,
         num_reservoirs=num_nodes, use_reservoir_emb=cfg.use_reservoir_emb,
         reservoir_emb_dim=cfg.reservoir_emb_dim, emb_dropout_p=cfg.emb_dropout_p,
         use_res_static=cfg.use_res_static, res_static_dim=cfg.res_static_dim,
-        res_static_mode=cfg.res_static_mode, film_gamma_scale=cfg.film_gamma_scale,
-        film_beta_scale=cfg.film_beta_scale, use_meta_only_static=cfg.use_meta_only_static,
+        use_meta_only_static=cfg.use_meta_only_static,
         meta_only_static_dim=cfg.meta_only_static_dim,
-        meta_feature_strengths=cfg.meta_feature_strengths,
-        use_err_head=cfg.use_err_head, err_head_hidden=cfg.err_head_hidden,
-        use_darsd=cfg.use_darsd, lcib_k=cfg.lcib_k, darsd_mode=cfg.darsd_mode,
+        use_darsd=cfg.use_darsd, lcib_k=cfg.lcib_k,
         backbone=cfg.backbone, n_heads=cfg.n_heads, tf_layers=cfg.tf_layers,
         tf_ff_mult=cfg.tf_ff_mult, tin=cfg.tin, device=device,
     )
@@ -174,7 +160,7 @@ def load_source_weights(model, state_dict, *, node_sets, backbone="lstm"):
     if core_missing:
         raise RuntimeError(
             "[CKPT][FATAL] core weights NOT loaded (shape mismatch / wrong ckpt-locked params). "
-            f"missing_core={core_missing}. Check hidden_dim/num_layers/use_err_head/use_darsd/"
+            f"missing_core={core_missing}. Check hidden_dim/num_layers/use_darsd/"
             "lcib_k/res_static_dim/reservoir_emb_dim are ckpt-locked correctly.")
 
     return {"loaded": len(filtered), "skipped": skipped,

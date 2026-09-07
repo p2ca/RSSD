@@ -46,15 +46,15 @@ targets:
 
 # The information-utilisation ladder. Every variant is trained on every source pool.
 variants:
-  - {key: seq2seq_lstm,            name: Seq2Seq-LSTM}
-  - {key: attribute_informed_lstm, name: Attribute-informed LSTM}
-  - {key: identity_informed_lstm,  name: Identity-informed LSTM}
-  - {key: fully_informed_lstm,     name: Fully-informed LSTM}
-  - {key: fully_informed_mmd,      name: Fully-informed LSTM + MMD}
-  - {key: fully_informed_coral,    name: Fully-informed LSTM + CORAL}
-  - {key: fully_informed_dann,     name: Fully-informed LSTM + DANN}
-  - {key: rssd_lstm,               name: RSSD-LSTM}
-  - {key: rssd_transformer,        name: RSSD-Transformer}
+  - {key: seq2seq_lstm,            name: LSTM baseline}
+  - {key: attribute_informed_lstm, name: LSTM + attributes}
+  - {key: identity_informed_lstm,  name: LSTM + reservoir-ID embedding}
+  - {key: fully_informed_lstm,     name: LSTM + attributes + reservoir-ID embedding}
+  - {key: fully_informed_mmd,      name: LSTM + attributes + reservoir-ID embedding + MMD}
+  - {key: fully_informed_coral,    name: LSTM + attributes + reservoir-ID embedding + CORAL}
+  - {key: fully_informed_dann,     name: LSTM + attributes + reservoir-ID embedding + DANN}
+  - {key: rssd_lstm,               name: RSSD (LSTM backbone)}
+  - {key: rssd_transformer,        name: RSSD (Transformer backbone)}
 
 # Transfer scenarios: which trained source model is evaluated on which target pool.
 scenarios:
@@ -89,7 +89,7 @@ partitions:
     rain_source: data/reservoirs_rain_source_swapC.txt
     rain_target: data/reservoirs_rain_target_swapC.txt
 
-# Sensitivity runs, expressed as overrides on the RSSD-LSTM configuration.
+# Sensitivity runs, expressed as overrides on the RSSD (LSTM backbone) configuration.
 sensitivity:
   embedding_dim:
     variant: rssd_lstm

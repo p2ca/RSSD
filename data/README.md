@@ -17,5 +17,4 @@ Point `RSSD_DATA` at a directory that holds them:
 
 Inflow and reservoir attributes come from the USACE reservoir-data platform maintained by
 the Nicholas Institute at Duke University; precipitation and air temperature come from the
-Daymet and Livneh products. `scripts/fetch_nid_surface_area.py` assembles the surface-area
-column of the attribute table from the National Inventory of Dams.
+Daymet and Livneh products, and reservoir surface area from the National Inventory of Dams.

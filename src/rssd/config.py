@@ -51,37 +51,37 @@ SCENARIOS = {
 # key            : stable identifier used on the command line
 # exp_name       : internal experiment id, kept for checkpoint/log path compatibility
 # model_variant  : architecture family recorded in the checkpoint directory name
-# darsd / err    : the DARSD{0,1}_ERR{0,1} suffix of the directory name
+# darsd / err    : the frozen DARSD{0,1}_ERR{0,1} suffix of the directory name
 # align_method   : none | mmd | coral | dann
 # label          : manuscript-facing name
 MODEL_VARIANTS = {
     "seq2seq_lstm": dict(exp_name="exp1_pure_lstm", model_variant="pure_lstm",
                          darsd=0, err=0, align_method="none",
-                         label="Seq2Seq-LSTM"),
+                         label="LSTM baseline"),
     "attribute_informed_lstm": dict(exp_name="exp4_meta_pure_lstm", model_variant="pure_lstm",
                                     darsd=0, err=0, align_method="none",
-                                    label="Attribute-informed LSTM"),
+                                    label="LSTM + attributes"),
     "identity_informed_lstm": dict(exp_name="exp6_context_lstm", model_variant="full_model",
                                    darsd=0, err=0, align_method="none",
-                                   label="Identity-informed LSTM"),
+                                   label="LSTM + reservoir-ID embedding"),
     "fully_informed_lstm": dict(exp_name="exp7_metacontext_lstm", model_variant="full_model",
                                 darsd=0, err=0, align_method="none",
-                                label="Fully-informed LSTM"),
+                                label="LSTM + attributes + reservoir-ID embedding"),
     "fully_informed_mmd": dict(exp_name="exp3_full_model_mmd", model_variant="full_model",
                                darsd=0, err=1, align_method="mmd",
-                               label="Fully-informed LSTM + MMD"),
+                               label="LSTM + attributes + reservoir-ID embedding + MMD"),
     "fully_informed_coral": dict(exp_name="exp8_full_model_coral", model_variant="full_model",
                                  darsd=0, err=1, align_method="coral",
-                                 label="Fully-informed LSTM + CORAL"),
+                                 label="LSTM + attributes + reservoir-ID embedding + CORAL"),
     "fully_informed_dann": dict(exp_name="exp9_full_model_dann", model_variant="full_model",
                                 darsd=0, err=1, align_method="dann",
-                                label="Fully-informed LSTM + DANN"),
+                                label="LSTM + attributes + reservoir-ID embedding + DANN"),
     "rssd_lstm": dict(exp_name="exp2_full_model", model_variant="full_model",
                       darsd=1, err=1, align_method="none",
-                      label="RSSD-LSTM"),
+                      label="RSSD (LSTM backbone)"),
     "rssd_transformer": dict(exp_name="exp2t_full_model_transformer", model_variant="full_model",
                              darsd=1, err=1, align_method="none",
-                             label="RSSD-Transformer"),
+                             label="RSSD (Transformer backbone)"),
 }
 
 
@@ -180,37 +180,23 @@ DEFAULT_TRAIN_CFG = {
         "SEED": 42,
     },
 
-    "runtime": {
-        "LAMBDA_ERR_INIT": 0.05,
-    },
-
     "model": {
-        "USE_DIRECT_HEAD": True,
-
         "use_reservoir_emb": True,
         "res_emb_dim": 8,
         "emb_dropout_p": 0.3,  # zero out embedding vector with prob 0.3 during training for cold-start robustness
 
         "use_res_static": True,
         "res_static_dim": 6,
-        "RES_STATIC_MODE": "latent",
-        "FILM_GAMMA_SCALE": 0.0,   # legacy field, kept only for ckpt compatibility
-        "FILM_BETA_SCALE": 0.0,    # legacy field, kept only for ckpt compatibility
 
         "use_meta_only_static": False,
         "meta_only_static_dim": 0,
         "meta_feature_names": ["storage_max", "elev_mean", "surface_area", "lat", "lon", "ground_elev"],
-        "meta_feature_strengths": [2.0, 2.0, 2.0, 1.5, 1.5, 1.5],  # v2 config: lat/lon helps NE05050 in full_model (unlike exp4); partial disable was worse
 
-        "latent_mode": "attn",          # last / mean / attn / last_mean
+        "latent_mode": "attn",          # last / attn
         "use_latent_proj": True,
-
-        "use_err_head": True,
-        "err_head_hidden": 64,
 
         "use_darsd": True,
         "lcib_k": 16,
-        "darsd_mode": "softmax_reconstruction",
 
         "HIDDEN_DIM": 256,
         "NUM_LAYERS": 1,
@@ -218,11 +204,8 @@ DEFAULT_TRAIN_CFG = {
     },
 
     "objective": {
-        "USE_HORIZON_WEIGHTS": True,
-        "HORIZON_WEIGHTS": [1, 1, 1, 1, 1.4, 2.2, 3.0],
         "CLAMP_PRED_TO_FR": True,
-        "USE_PER_RES_NORM_LOSS": True,  # normalize each reservoir loss by its train variance => approx mean(1-R2) per reservoir
-        "DARSD_WEIGHT": 0.0002,  # v5 optimal; moved from hardcoded to config
+        "DARSD_WEIGHT": 0.0002,
     },
 
     "train": {
@@ -246,15 +229,7 @@ DEFAULT_TRAIN_CFG = {
     "data": {
         "BATCH_SIZE": 128,
 
-        "TRAIN_WINDOW_DROP_FRAC": 0.0,
-        "TRAIN_WINDOW_DROP_SEED": 424242,
 
-        "USE_EVENT_BALANCED_SAMPLING": False,
-        "EVENT_FOCUS_LOW_FLOW_FRACTION": 0.60,
-        "EVENT_SCORE_QUANTILE": 0.80,
-        "EVENT_UPWEIGHT": 3.0,
-        "FLAT_WINDOW_QUANTILE": 0.35,
-        "FLAT_WINDOW_KEEP_FRAC": 0.35,
 
         "DL_NUM_WORKERS": 2,
         "DL_PIN_MEMORY": None,
@@ -339,9 +314,9 @@ def build_train_cfg(variant: str = None, dataset_tag: str = None, version_tag: s
 def train_run_dir(cfg: dict):
     """``logs/train_<domain>/<exp>_<variant>_DARSD{0,1}_ERR{0,1}/<version>``."""
     domain = str(cfg["experiment"]["DATASET_TAG"]).split("_")[0]
-    m = cfg["model"]
+    spec = _variant_spec(str(cfg["ablation"]["EXP_NAME"]))
     group = (f"{cfg['ablation']['EXP_NAME']}_{cfg['ablation']['MODEL_VARIANT']}"
-             f"_DARSD{int(bool(m['use_darsd']))}_ERR{int(bool(m['use_err_head']))}")
+             f"_DARSD{int(bool(cfg['model']['use_darsd']))}_ERR{spec['err']}")
     return paths.train_log_dir(domain, group, str(cfg["experiment"]["VERSION_TAG"]))
 
 

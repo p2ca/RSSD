@@ -1,9 +1,7 @@
-"""The experiment manifest and the quickstart example stay in step with the code."""
+"""The experiment manifest stays in step with the code."""
 
 from __future__ import annotations
 
-import contextlib
-import io
 import sys
 import unittest
 from pathlib import Path
@@ -75,20 +73,6 @@ class ManifestTests(unittest.TestCase):
         for rel in referenced:
             with self.subTest(file=rel):
                 self.assertTrue((REPO / rel).is_file(), f"{rel} is missing from the repository")
-
-
-class QuickstartTests(unittest.TestCase):
-    def test_the_example_runs_without_data(self):
-        sys.path.insert(0, str(REPO / "examples"))
-        import quickstart
-
-        buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer):
-            quickstart.main()
-        text = buffer.getvalue()
-        self.assertIn("dynamic state h_dyn", text)
-        for variant in MODEL_VARIANTS:
-            self.assertIn(variant, text)
 
 
 if __name__ == "__main__":

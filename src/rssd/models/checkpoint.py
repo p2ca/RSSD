@@ -15,7 +15,7 @@ from rssd.data.static_attrs import LEGACY_STATIC_ATTRIBUTE_NAMES
 
 __all__ = ["CheckpointConfig", "load_checkpoint_config", "VALID_LATENT_MODES"]
 
-VALID_LATENT_MODES = {"last", "mean", "attn", "last_mean"}
+VALID_LATENT_MODES = {"last", "attn"}
 SUPPORTED_BACKBONES = {"lstm", "transformer_seq2seq"}
 
 REQUIRED_CONFIG_KEYS = [
@@ -23,7 +23,6 @@ REQUIRED_CONFIG_KEYS = [
     "use_reservoir_emb", "reservoir_emb_dim",
     "use_res_static", "res_static_dim",
     "latent_mode", "use_latent_proj",
-    "use_err_head", "err_head_hidden",
     "use_darsd", "lcib_k",
 ]
 
@@ -36,7 +35,6 @@ class CheckpointConfig:
     hidden_dim: int
     num_layers: int
     dropout: float
-    use_direct_head: bool
     latent_mode: str
     use_latent_proj: bool
 
@@ -55,20 +53,13 @@ class CheckpointConfig:
     # static attributes
     use_res_static: bool = False
     res_static_dim: int = 0
-    res_static_mode: str = "add"
-    film_gamma_scale: float = 0.10
-    film_beta_scale: float = 0.10
     use_meta_only_static: bool = False
     meta_only_static_dim: int = 0
     meta_feature_names: list = field(default_factory=lambda: list(LEGACY_STATIC_ATTRIBUTE_NAMES))
-    meta_feature_strengths: list = field(default_factory=list)
 
     # auxiliary heads and RSSD
-    use_err_head: bool = False
-    err_head_hidden: int = 0
     use_darsd: bool = False
     lcib_k: int = 0
-    darsd_mode: str = "softmax_reconstruction"
 
     # provenance
     dataset_tag: str = ""
@@ -107,10 +98,6 @@ class CheckpointConfig:
             raise ValueError(f"[CKPT] Contract violation: use_meta_only_static=True requires "
                              f"meta_only_static_dim==len(meta_feature_names)={n_features}, "
                              f"got {self.meta_only_static_dim}")
-        if self.use_meta_only_static and len(self.meta_feature_strengths) != int(self.meta_only_static_dim):
-            raise ValueError(f"[CKPT] Contract violation: "
-                             f"len(meta_feature_strengths)={len(self.meta_feature_strengths)} "
-                             f"!= meta_only_static_dim={self.meta_only_static_dim}")
 
     def describe(self) -> str:
         return (f"exp={self.exp_name} variant={self.model_variant} backbone={self.backbone} "
@@ -145,13 +132,6 @@ def load_checkpoint_config(ckpt_path, expected_dataset_tag=None, expected_scaler
 
     meta_feature_names = list(cfg.get("meta_feature_names", LEGACY_STATIC_ATTRIBUTE_NAMES))
     meta_only_static_dim = int(cfg.get("meta_only_static_dim", 0))
-    if "meta_feature_strengths" in cfg:
-        meta_feature_strengths = [float(v) for v in cfg["meta_feature_strengths"]]
-    else:
-        # backward compatibility with early attribute-informed bundles that stored a scalar
-        legacy_strength = float(cfg.get("meta_strength", 1.0))
-        meta_feature_strengths = [legacy_strength] * max(meta_only_static_dim,
-                                                         len(LEGACY_STATIC_ATTRIBUTE_NAMES))
 
     for key in ("dataset_tag", "scaler_type"):
         if bundle.get(key, None) is None:
@@ -166,7 +146,6 @@ def load_checkpoint_config(ckpt_path, expected_dataset_tag=None, expected_scaler
         hidden_dim=int(cfg["hidden_dim"]),
         num_layers=int(cfg["num_layers"]),
         dropout=float(cfg["dropout"]),
-        use_direct_head=bool(cfg.get("use_direct_head", False)),
         latent_mode=str(cfg["latent_mode"]),
         use_latent_proj=bool(cfg["use_latent_proj"]),
         backbone=str(cfg.get("backbone", "lstm")),
@@ -179,18 +158,11 @@ def load_checkpoint_config(ckpt_path, expected_dataset_tag=None, expected_scaler
         emb_dropout_p=float(cfg.get("emb_dropout_p", 0.0)),
         use_res_static=bool(cfg["use_res_static"]),
         res_static_dim=int(cfg["res_static_dim"]),
-        res_static_mode=str(cfg.get("res_static_mode", "add")),
-        film_gamma_scale=float(cfg.get("film_gamma_scale", 0.10)),
-        film_beta_scale=float(cfg.get("film_beta_scale", 0.10)),
         use_meta_only_static=bool(cfg.get("use_meta_only_static", False)),
         meta_only_static_dim=meta_only_static_dim,
         meta_feature_names=meta_feature_names,
-        meta_feature_strengths=meta_feature_strengths,
-        use_err_head=bool(cfg["use_err_head"]),
-        err_head_hidden=int(cfg["err_head_hidden"]),
         use_darsd=bool(cfg["use_darsd"]),
         lcib_k=int(cfg["lcib_k"]),
-        darsd_mode=str(cfg.get("darsd_mode", "softmax_reconstruction")),
         dataset_tag=str(bundle["dataset_tag"]),
         scaler_type=str(bundle["scaler_type"]),
         exp_name=str(bundle.get("exp_name", "exp_unknown")),

@@ -311,5 +311,5 @@ def evaluate_model(model, test_loader, encode_map, scaler_data, device, inv_pack
         overall_r2_out = overall_r2_org
         daily_r2_out = daily_r2_org
 
-    print(f"[REPORT] Overall R2 Score uses {_mode} (returned to Cell 5).")
+    print(f"[REPORT] Overall R2 Score uses {_mode}.")
     return overall_r2_out, daily_r2_out, r2_org_dict, r2_org_daily_dict

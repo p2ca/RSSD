@@ -26,7 +26,7 @@ from rssd.data.scalers import build_local_y_inverse_tensors
 from rssd.engine.trainer import evaluate_model, run_epoch
 from rssd.io.bundle import _average_state_dicts
 from rssd.models import builder
-from rssd.objectives.schedules import get_err_weight, get_mmd_weight
+from rssd.objectives.schedules import get_mmd_weight
 from rssd.utils import TrainingLogger, seed_everything
 
 __all__ = ["train_source_model"]
@@ -48,10 +48,6 @@ def _bundle_config(cfg: dict, input_dim: int, pred_len: int) -> dict:
         "output_dim": 1,
         "num_layers": int(m["NUM_LAYERS"]),
         "pred_len": int(pred_len),
-        "use_direct_head": bool(m["USE_DIRECT_HEAD"]),
-        "res_static_mode": str(m["RES_STATIC_MODE"]),
-        "film_gamma_scale": float(m["FILM_GAMMA_SCALE"]),
-        "film_beta_scale": float(m["FILM_BETA_SCALE"]),
         "dropout": float(m["DROPOUT"]),
         "use_reservoir_emb": bool(m["use_reservoir_emb"]),
         "reservoir_emb_dim": int(m["res_emb_dim"]),
@@ -59,15 +55,11 @@ def _bundle_config(cfg: dict, input_dim: int, pred_len: int) -> dict:
         "use_meta_only_static": bool(m["use_meta_only_static"]),
         "meta_only_static_dim": int(m["meta_only_static_dim"]),
         "meta_feature_names": list(m["meta_feature_names"]),
-        "meta_feature_strengths": [float(v) for v in m["meta_feature_strengths"]],
         "res_static_dim": int(m["res_static_dim"]),
         "latent_mode": str(m["latent_mode"]),
         "use_latent_proj": bool(m["use_latent_proj"]),
-        "use_err_head": bool(m["use_err_head"]),
-        "err_head_hidden": int(m["err_head_hidden"]),
         "use_darsd": bool(m["use_darsd"]),
         "lcib_k": int(m["lcib_k"]),
-        "darsd_mode": str(m["darsd_mode"]),
         "emb_dropout_p": float(m.get("emb_dropout_p", 0.0)),
         "backbone": str(m.get("BACKBONE", "lstm")),
         "n_heads": int(m.get("N_HEADS", 8)),
@@ -115,10 +107,7 @@ def train_source_model(cfg: dict, *, device=None, output_dir=None, max_epochs=No
     if str(exp["RUN_TAG"]) == "AUTO":
         # the run tag records which reservoirs the run actually trained on
         exp["RUN_TAG"] = ds.auto_run_tag()
-    scale_arr, _scale_dict, var_arr, y_train_orig = datasets.compute_train_scale_stats(ds)
-    window_scores, _focus_idx, _focus_names = datasets.build_window_scores(
-        ds, y_train_orig, scale_arr,
-        low_flow_fraction=float(dcfg["EVENT_FOCUS_LOW_FLOW_FRACTION"]))
+    scale_arr, _scale_dict, _var_arr, _y_train_orig = datasets.compute_train_scale_stats(ds)
 
     train_dataset, val_dataset, test_dataset = datasets.build_datasets(ds)
 
@@ -126,15 +115,8 @@ def train_source_model(cfg: dict, *, device=None, output_dir=None, max_epochs=No
                   else bool(dcfg["DL_PIN_MEMORY"]))
     num_workers = int(dcfg["DL_NUM_WORKERS"])
     loaders = datasets.build_dataloaders(
-        train_dataset, val_dataset, test_dataset, window_scores,
+        train_dataset, val_dataset, test_dataset,
         batch_size=int(dcfg["BATCH_SIZE"]), seed=int(exp["SEED"]),
-        use_event_balanced_sampling=bool(dcfg["USE_EVENT_BALANCED_SAMPLING"]),
-        event_score_quantile=float(dcfg["EVENT_SCORE_QUANTILE"]),
-        event_upweight=float(dcfg["EVENT_UPWEIGHT"]),
-        flat_window_quantile=float(dcfg["FLAT_WINDOW_QUANTILE"]),
-        flat_window_keep_frac=float(dcfg["FLAT_WINDOW_KEEP_FRAC"]),
-        train_window_drop_frac=float(dcfg["TRAIN_WINDOW_DROP_FRAC"]),
-        train_window_drop_seed=int(dcfg["TRAIN_WINDOW_DROP_SEED"]),
         num_workers=num_workers, pin_memory=pin_memory,
         persistent_workers=bool(num_workers > 0),
         prefetch_factor=int(dcfg["DL_PREFETCH_FACTOR"]) if num_workers > 0 else None)
@@ -158,20 +140,15 @@ def train_source_model(cfg: dict, *, device=None, output_dir=None, max_epochs=No
         input_dim=int(ds.X_train.shape[-1]), hidden_dim=int(m["HIDDEN_DIM"]),
         num_layers=int(m["NUM_LAYERS"]), pred_len=ds.pred_len, dropout=float(m["DROPOUT"]),
         latent_mode=str(m["latent_mode"]), use_latent_proj=bool(m["use_latent_proj"]),
-        use_direct_head=bool(m["USE_DIRECT_HEAD"]), num_reservoirs=ds.num_nodes,
+        num_reservoirs=ds.num_nodes,
         use_reservoir_emb=bool(m["use_reservoir_emb"]),
         reservoir_emb_dim=int(m["res_emb_dim"]),
         emb_dropout_p=float(m.get("emb_dropout_p", 0.0)),
         use_res_static=bool(m["use_res_static"]), res_static_dim=int(m["res_static_dim"]),
-        res_static_mode=str(m["RES_STATIC_MODE"]),
-        film_gamma_scale=float(m["FILM_GAMMA_SCALE"]),
-        film_beta_scale=float(m["FILM_BETA_SCALE"]),
         use_meta_only_static=bool(m["use_meta_only_static"]),
         meta_only_static_dim=int(m["meta_only_static_dim"]),
-        meta_feature_strengths=m["meta_feature_strengths"],
-        use_err_head=bool(m["use_err_head"]), err_head_hidden=int(m["err_head_hidden"]),
         use_darsd=bool(m["use_darsd"]), lcib_k=int(m["lcib_k"]),
-        darsd_mode=str(m["darsd_mode"]), backbone=str(m.get("BACKBONE", "lstm")),
+        backbone=str(m.get("BACKBONE", "lstm")),
         n_heads=int(m.get("N_HEADS", 8)), tf_layers=int(m.get("TF_LAYERS", 2)),
         tf_ff_mult=int(m.get("TF_FF_MULT", 4)), tin=int(m.get("TIN", 30)), device=device)
 
@@ -211,18 +188,11 @@ def train_source_model(cfg: dict, *, device=None, output_dir=None, max_epochs=No
     inv_pack_y = build_local_y_inverse_tensors(ds.scaler_data,
                                                ds.reservoir_names_in_node_order, device)
     y_scale_t = torch.tensor(scale_arr, device=device, dtype=torch.float32)
-    # variance in normalised space, so the per-reservoir loss approximates mean(1 - R2)
-    res_var_norm_t = torch.tensor(var_arr, device=device, dtype=torch.float32) / (y_scale_t ** 2)
 
     epoch_kwargs = dict(
         clamp_pred_to_fr=bool(obj["CLAMP_PRED_TO_FR"]),
-        use_horizon_weights=bool(obj["USE_HORIZON_WEIGHTS"]),
-        horizon_weights=list(obj["HORIZON_WEIGHTS"]),
         grad_clip_norm=float(tr["GRAD_CLIP_NORM"]),
-        use_vrex=bool(obj.get("USE_VREX", False)),
-        vrex_weight=float(obj.get("VREX_WEIGHT", 0.1)),
         DARSD_WEIGHT=float(obj["DARSD_WEIGHT"]),
-        res_var_norm_t=res_var_norm_t,
         mmd_kernel_num=int(adapt["MMD_KERNEL_NUM"]),
         mmd_kernel_mul=float(adapt["MMD_KERNEL_MUL"]),
         mmd_normalize_latent=bool(adapt["MMD_NORMALIZE_LATENT"]),
@@ -230,7 +200,6 @@ def train_source_model(cfg: dict, *, device=None, output_dir=None, max_epochs=No
     )
 
     max_epochs = int(max_epochs or tr["MAX_EPOCHS"])
-    lambda_neg = 0.0
     best_metric, best_epoch, best_state_cpu, best_val_loss = 1e18, -1, None, None
     best_metric_name = "val_normMAE_mean"
     best_bundle, no_improve, avg_state_queue = None, 0, []
@@ -238,28 +207,24 @@ def train_source_model(cfg: dict, *, device=None, output_dir=None, max_epochs=No
 
     # ---------------------------------------------------------------- epochs
     for epoch in range(1, max_epochs + 1):
-        lambda_err = get_err_weight(epoch, w_max=0.2, warmup=5, ramp=10)
         lambda_align = get_mmd_weight(
             epoch, w_max=_align_weight_max(cfg),
             warmup=int(adapt["MMD_WARMUP_EPOCHS"]),
             ramp=int(adapt["MMD_RAMP_EPOCHS"])) if use_align else 0.0
 
         train_loss, train_mae = run_epoch(
-            model, loaders["train"], criterion, inv_pack_y, y_transform, y_scale_t, lambda_neg,
-            optimizer=optimizer, train=True, device=device,
-            err_weight=lambda_err, epoch=epoch,
+            model, loaders["train"], criterion, inv_pack_y, y_transform, y_scale_t,
+            optimizer=optimizer, train=True, device=device, epoch=epoch,
             target_loader=target_loader, align_method=align_method,
             align_weight=lambda_align, domain_discriminator=discriminator,
-            mmd_weight=lambda_align,
-            use_per_res_norm_loss=bool(obj["USE_PER_RES_NORM_LOSS"]), **epoch_kwargs)
+            mmd_weight=lambda_align, **epoch_kwargs)
 
         val_loss, val_mae = run_epoch(
-            model, loaders["val"], criterion, inv_pack_y, y_transform, y_scale_t, lambda_neg,
-            optimizer=None, train=False, device=device,
-            err_weight=0.0, epoch=epoch,
+            model, loaders["val"], criterion, inv_pack_y, y_transform, y_scale_t,
+            optimizer=None, train=False, device=device, epoch=epoch,
             target_loader=None, align_method=align_method,
             align_weight=0.0, domain_discriminator=discriminator,
-            mmd_weight=0.0, use_per_res_norm_loss=False, **epoch_kwargs)
+            mmd_weight=0.0, **epoch_kwargs)
 
         if bool(m["use_meta_only_static"]):
             selection_metric, selection_metric_name = float(val_loss), "val_loss"
